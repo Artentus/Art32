@@ -1,0 +1,157 @@
+#[keep_hierarchy]
+mod CE (
+    out sig ce_n_out: bit,
+
+    in sig reset: bit,
+    in sig clk: bit,
+) {
+    #[syn_useioff, ioff_dir("output")]
+    reg ce_n: bit;
+
+    proc rising(clk) {
+        ce_n = if reset { 1 as bit } else { 0 as bit };
+    }
+
+    comb {
+        ce_n_out = ce_n;
+    }
+}
+
+#[keep_hierarchy]
+mod OE (
+    in sig oe_n_in: bit,
+    out sig oe_n_out: bit,
+
+    in sig clk: bit,
+) {
+    #[syn_useioff, ioff_dir("output")]
+    reg oe_n: bit;
+
+    proc rising(clk) {
+        oe_n = oe_n_in;
+    }
+
+    comb {
+        oe_n_out = oe_n;
+    }
+}
+
+#[keep_hierarchy]
+mod SramInterface (
+    // signals to SRAM
+    #[syn_useioff, ioff_dir("output")]
+    out reg sram_address_out: bits<18>,
+    #[syn_useioff, ioff_dir("output")]
+    out reg sram_we_n_out: bit,
+    out sig sram_we_out: bit,
+
+    in sig sram_a_data_in: bits<16>,
+    out sig sram_a_data_out: bits<16>,
+    out sig sram_a_ce_n_out: bit,
+    out sig sram_a_oe_n_out: bit,
+    #[syn_useioff, ioff_dir("output")]
+    out reg sram_a_lb_n_out: bit,
+    #[syn_useioff, ioff_dir("output")]
+    out reg sram_a_ub_n_out: bit,
+
+    in sig sram_b_data_in: bits<16>,
+    out sig sram_b_data_out: bits<16>,
+    out sig sram_b_ce_n_out: bit,
+    out sig sram_b_oe_n_out: bit,
+    #[syn_useioff, ioff_dir("output")]
+    out reg sram_b_lb_n_out: bit,
+    #[syn_useioff, ioff_dir("output")]
+    out reg sram_b_ub_n_out: bit,
+
+    // signals to core
+    in sig address_in: bits<18>,
+    in sig data_in: bits<32>,
+    out sig data_out: bits<32>,
+    in sig write_read_n_in: bit,
+    in sig byte_enable_in: bits<4>,
+
+    in sig reset: bit,
+    in sig clk: bit,
+    in sig clk2: bit,
+) {
+    reg cycle_parity: bit;
+    proc rising(clk2) {
+        cycle_parity = if reset {
+            0 as bit
+        } else {
+            !cycle_parity
+        };
+    }
+
+    proc rising(clk2) {
+        if cycle_parity {
+            sram_we_n_out   = !write_read_n_in;
+            sram_a_lb_n_out = !byte_enable_in[0];
+            sram_a_ub_n_out = !byte_enable_in[1];
+            sram_b_lb_n_out = !byte_enable_in[2];
+            sram_b_ub_n_out = !byte_enable_in[3];
+        } else {
+            sram_we_n_out   = 1 as bit;
+            sram_a_lb_n_out = 1 as bit;
+            sram_a_ub_n_out = 1 as bit;
+            sram_b_lb_n_out = 1 as bit;
+            sram_b_ub_n_out = 1 as bit;
+        }
+    }
+
+    #[syn_useioff, ioff_dir("output")]
+    reg sram_a_data_out_reg: bits<16>;
+    #[syn_useioff, ioff_dir("input")]
+    reg sram_a_data_in_reg: bits<16>;
+    #[syn_useioff, ioff_dir("output")]
+    reg sram_b_data_out_reg: bits<16>;
+    #[syn_useioff, ioff_dir("input")]
+    reg sram_b_data_in_reg: bits<16>;
+
+    proc rising(clk) {
+        sram_address_out = address_in;
+        sram_a_data_out_reg = data_in[ 0..16];
+        sram_b_data_out_reg = data_in[16..32];
+    }
+
+    proc falling(clk) {
+        sram_a_data_in_reg = sram_a_data_in;
+        sram_b_data_in_reg = sram_b_data_in;
+    }
+
+    reg sram_we_reg: bit;
+    proc rising(clk) {
+        sram_we_reg = write_read_n_in;
+    }
+
+    let sram_a_ce: CE;
+    let sram_b_ce: CE;
+    comb {
+        sram_a_ce.reset = reset;
+        sram_a_ce.clk = clk;
+
+        sram_b_ce.reset = reset;
+        sram_b_ce.clk = clk;
+    }
+
+    let sram_a_oe: OE;
+    let sram_b_oe: OE;
+    comb {
+        sram_a_oe.oe_n_in = if cycle_parity { write_read_n_in } else { 1 as bit };
+        sram_b_oe.oe_n_in = if cycle_parity { write_read_n_in } else { 1 as bit };
+
+        sram_a_oe.clk = clk2;
+        sram_b_oe.clk = clk2;
+    }
+
+    comb {
+        sram_we_out = sram_we_reg;
+        sram_a_ce_n_out = sram_a_ce.ce_n_out;
+        sram_b_ce_n_out = sram_b_ce.ce_n_out;
+        sram_a_oe_n_out = sram_a_oe.oe_n_out;
+        sram_b_oe_n_out = sram_b_oe.oe_n_out;
+        sram_a_data_out = sram_a_data_out_reg;
+        sram_b_data_out = sram_b_data_out_reg;
+        data_out = sram_b_data_in_reg @ sram_a_data_in_reg;
+    }
+}

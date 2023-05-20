@@ -1,0 +1,27 @@
+mod ConditionUnit (
+    in sig flags: Flags,
+    in sig condition: Condition,
+
+    out sig conditional: bit,
+) {
+    comb {
+        conditional = match condition {
+            Condition::Never              => 0 as bit,
+            Condition::Carry              =>  flags.carry,
+            Condition::Zero               =>  flags.zero,
+            Condition::Signed             =>  flags.sign,
+            Condition::Overflow           =>  flags.overflow,
+            Condition::NotCarry           => !flags.carry,
+            Condition::NotZero            => !flags.zero,
+            Condition::NotSigned          => !flags.sign,
+            Condition::NotOverflow        => !flags.overflow,
+            Condition::UnsignedLessEqual  => !flags.carry |  flags.zero,
+            Condition::UnsignedGreater    =>  flags.carry & !flags.zero,
+            Condition::SignedLess         =>  flags.sign != flags.overflow,
+            Condition::SignedGreaterEqual =>  flags.sign == flags.overflow,
+            Condition::SignedLessEqual    =>  flags.zero | (flags.sign != flags.overflow),
+            Condition::SignedGreater      => !flags.zero & (flags.sign == flags.overflow),
+            Condition::Always             => 1 as bit,
+        };
+    }
+}

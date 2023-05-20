@@ -1,0 +1,48 @@
+mod FlagRegister (
+    in sig flags_in: Flags,
+    in sig load: bit,
+
+    out sig flags_out: Flags,
+
+    in sig enable: bit,
+    in sig clk: bit,
+) {
+    reg flags: Flags;
+
+    proc rising(clk) {
+        if enable & load {
+            flags = flags_in;
+        }
+    }
+
+    comb {
+        flags_out = flags;
+    }
+}
+
+mod KernelModeRegister (
+    in sig set: bit,
+    in sig clear: bit,
+
+    out sig k_flag_out: bit,
+
+    in sig enable: bit,
+    in sig reset: bit,
+    in sig clk: bit,
+) {
+    reg k_flag: bit;
+
+    proc rising(clk) {
+        if reset {
+            k_flag = 1 as bit;
+        } else if enable & clear {
+            k_flag = 0 as bit;
+        } else if enable & set {
+            k_flag = 1 as bit;
+        }
+    }
+
+    comb {
+        k_flag_out = k_flag;
+    }
+}

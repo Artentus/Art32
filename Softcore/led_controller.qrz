@@ -1,0 +1,45 @@
+mod LedController (
+    in sig data_in: bits<24>,
+    out sig data_out: bits<24>,
+    in sig write: bit,
+
+    #[syn_useioff, ioff_dir("output")]
+    out reg r_out: bit,
+    #[syn_useioff, ioff_dir("output")]
+    out reg g_out: bit,
+    #[syn_useioff, ioff_dir("output")]
+    out reg b_out: bit,
+
+    in sig reset: bit,
+    in sig clk: bit,
+) {
+    reg r: bits<8>;
+    reg g: bits<8>;
+    reg b: bits<8>;
+    proc rising(clk) {
+        if reset {
+            r = 0 as bits::<8>;
+            g = 0 as bits::<8>;
+            b = 0 as bits::<8>;
+        } else if write {
+            r = data_in[ 0.. 8];
+            g = data_in[ 8..16];
+            b = data_in[16..24];
+        }
+    }
+
+    comb {
+        data_out = b @ g @ r;
+    }
+
+    reg counter: bits<16>;
+    proc rising(clk) {
+        counter = counter + 1;
+    }
+
+    proc rising(clk) {
+        r_out = r > counter[8..16];
+        g_out = g > counter[8..16];
+        b_out = b > counter[8..16];
+    }
+}

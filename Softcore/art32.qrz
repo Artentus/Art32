@@ -1,0 +1,297 @@
+top mod Art32 {
+    let reset_n: InPort<1>;
+    let clk25: InPort<1>;
+
+    sig clk200: bit;
+    sig clk80: bit;
+    sig clk40: bit;
+    sig reset: bit;
+    let pll: Pll;
+    comb {
+        pll.clk25 = clk25.d_in;
+
+        clk200 = pll.clk200;
+        clk80 = pll.clk80;
+        clk40 = pll.clk40;
+        reset = !reset_n.d_in | !pll.locked;
+    }
+
+    reg reset40: bit;
+    proc rising(clk40) {
+        reset40 = reset;
+    }
+
+    reg cpu_reset_1: bit;
+    reg cpu_reset_2: bit;
+    reg cpu_reset_3: bit;
+    reg cpu_reset_4: bit;
+    reg cpu_reset_5: bit;
+    reg cpu_reset_6: bit;
+    reg cpu_reset_7: bit;
+    proc rising(clk40) {
+        cpu_reset_1 = reset40;
+        cpu_reset_2 = cpu_reset_1;
+        cpu_reset_3 = cpu_reset_2;
+        cpu_reset_4 = cpu_reset_3;
+        cpu_reset_5 = cpu_reset_4;
+        cpu_reset_6 = cpu_reset_5;
+        cpu_reset_7 = cpu_reset_6;
+    }
+
+    sig cpu_reset: bit;
+    comb {
+        cpu_reset = reset40
+            | cpu_reset_1
+            | cpu_reset_2
+            | cpu_reset_3
+            | cpu_reset_4
+            | cpu_reset_5
+            | cpu_reset_6
+            | cpu_reset_7;
+    }
+
+    let cpu: Cpu;
+    comb {
+        cpu.enable = 1 as bit;
+        cpu.reset = cpu_reset;
+        cpu.clk = clk40;
+    }
+
+    reg cycle_count: bits<64>;
+    proc rising(clk40) {
+        cycle_count = if cpu_reset {
+            0 as bits::<64>
+        } else {
+            cycle_count + 1
+        };
+    }
+
+    reg stall_count: bits<64>;
+    proc rising(clk40) {
+        if cpu_reset {
+            stall_count = 0 as bits::<64>;
+        } else if cpu.stall_out {
+            stall_count = stall_count + 1;
+        }
+    }
+
+    const CLOCK_RATE = 40_000_000;
+    const CLOCKS_PER_MICRO_SECOND = CLOCK_RATE / 1_000_000;
+    const TIMER_DIV_BITS = clog2(CLOCKS_PER_MICRO_SECOND);
+
+    reg timer_div: bits<TIMER_DIV_BITS>;
+    reg timer: bits<64>;
+    proc rising(clk40) {
+        if cpu_reset {
+            timer_div = 0 as bits::<TIMER_DIV_BITS>;
+            timer = 0 as bits::<64>;
+        } else if timer_div == (CLOCKS_PER_MICRO_SECOND - 1) {
+            timer_div = 0 as bits::<TIMER_DIV_BITS>;
+            timer = timer + 1;
+        } else {
+            timer_div = timer_div + 1;
+        }
+    }
+
+    let kram: KernelRam;
+    comb {
+        kram.instr_addr_in = cpu.instruction_address_out[2..15];
+        cpu.instruction_word_in = kram.instr_out;
+
+        kram.data_addr_in = cpu.mem_address_out[0..13];
+        kram.data_in = cpu.mem_data_out;
+        kram.data_byte_enable = cpu.mem_byte_enable_out;
+
+        kram.clk = clk40;
+    }
+
+    let sram_address: OutPort<18>;
+    let sram_we_n: OutPort<1>;
+    let sram_a_data: InOutPort<16>;
+    let sram_a_ce_n: OutPort<1>;
+    let sram_a_oe_n: OutPort<1>;
+    let sram_a_lb_n: OutPort<1>;
+    let sram_a_ub_n: OutPort<1>;
+    let sram_b_data: InOutPort<16>;
+    let sram_b_ce_n: OutPort<1>;
+    let sram_b_oe_n: OutPort<1>;
+    let sram_b_lb_n: OutPort<1>;
+    let sram_b_ub_n: OutPort<1>;
+    let sram: SramInterface;
+    comb {
+        sram_address.d_out = sram.sram_address_out;
+        sram_we_n.d_out = sram.sram_we_n_out;
+    
+        sram_a_data.d_out = sram.sram_a_data_out;
+        sram.sram_a_data_in = sram_a_data.d_in;
+        sram_a_data.oe = sram.sram_we_out;
+        sram_a_ce_n.d_out = sram.sram_a_ce_n_out;
+        sram_a_oe_n.d_out = sram.sram_a_oe_n_out;
+        sram_a_lb_n.d_out = sram.sram_a_lb_n_out;
+        sram_a_ub_n.d_out = sram.sram_a_ub_n_out;
+    
+        sram_b_data.d_out = sram.sram_b_data_out;
+        sram.sram_b_data_in = sram_b_data.d_in;
+        sram_b_data.oe = sram.sram_we_out;
+        sram_b_ce_n.d_out = sram.sram_b_ce_n_out;
+        sram_b_oe_n.d_out = sram.sram_b_oe_n_out;
+        sram_b_lb_n.d_out = sram.sram_b_lb_n_out;
+        sram_b_ub_n.d_out = sram.sram_b_ub_n_out;
+
+        sram.address_in = cpu.mem_address_out[0..18];
+        sram.data_in = cpu.mem_data_out;
+        sram.byte_enable_in = cpu.mem_byte_enable_out;
+
+        sram.reset = reset40;
+        sram.clk = clk40;
+        sram.clk2 = clk80;
+    }
+
+    let vram: VideoRam;
+    comb {
+        vram.cpu_address = cpu.mem_address_out[0..22];
+        vram.cpu_data_in = cpu.mem_data_out;
+        vram.cpu_byte_enable = cpu.mem_byte_enable_out;
+
+        vram.cpu_clk = clk40;
+        vram.vdp_clk = clk40;
+    }
+
+    let mmu: Mmu;
+    comb {
+        mmu.mem_page = cpu.mem_address_out[22..30];
+        mmu.mem_enable = cpu.mem_enable_out;
+        mmu.mem_write = cpu.mem_write_out;
+        mmu.k_flag = cpu.k_flag_out;
+
+        kram.data_write = mmu.kram_write;
+        sram.write_read_n_in = mmu.sram_write;
+        vram.cpu_write = mmu.vram_write;
+
+        mmu.kram_data_in = kram.data_out;
+        mmu.sram_data_in = sram.data_out;
+        mmu.vram_data_in = vram.cpu_data_out;
+        cpu.mem_data_in = mmu.data_out;
+
+        mmu.reset = reset40;
+        mmu.clk = clk40;
+    }
+
+    let rxd: InPort<1>;
+    let txd: OutPort<1>;
+    let serial: SerialController;
+    comb {
+        serial.addr_in = cpu.io_address_out[0..2];
+        serial.data_in = cpu.io_data_out[0..8];
+        serial.write = cpu.io_write_out;
+
+        serial.rxd = rxd.d_in;
+        txd.d_out = serial.txd;
+
+        serial.enable =
+            cpu.io_enable_out
+            & (cpu.io_address_out <= 0b11);
+        serial.reset = reset40;
+        serial.clk = clk40;
+    }
+
+    let hdmi_clk: OutPort<1>;
+    let hdmi_d0: OutPort<1>;
+    let hdmi_d1: OutPort<1>;
+    let hdmi_d2: OutPort<1>;
+    let vdp: Vdp;
+    comb {
+        vram.vdp_bitmap_index = vdp.bitmap_index;
+        vram.vdp_bitmap_row = vdp.bitmap_row;
+        vdp.row_data_in = vram.vdp_row_data_out;
+
+        vram.vdp_palette_index = vdp.palette_index;
+        vram.vdp_color_index = vdp.color_index;
+        vdp.color_in = vram.vdp_color_out;
+
+        vram.vdp_tile_column = vdp.tile_column;
+        vram.vdp_tile_row = vdp.tile_row;
+        vdp.bitmap_index_in = vram.vdp_bitmap_index_out;
+        vdp.palette_index_in = vram.vdp_palette_index_out;
+
+        hdmi_clk.d_out = clk40;
+        hdmi_d0.d_out = vdp.b_out;
+        hdmi_d1.d_out = vdp.g_out;
+        hdmi_d2.d_out = vdp.r_out;
+
+        vdp.reset = reset40;
+        vdp.sclk = clk200;
+        vdp.pclk = clk40;
+
+        vdp.cpu_addr_in = cpu.io_address_out[0..2];
+        vdp.cpu_data_in = cpu.io_data_out;
+        vdp.cpu_write =
+              cpu.io_write_out
+            & cpu.io_enable_out
+            & (cpu.io_address_out >= 0b100)
+            & (cpu.io_address_out <= 0b111);
+    }
+
+    let led_r: OutPort<1>;
+    let led_g: OutPort<1>;
+    let led_b: OutPort<1>;
+    let led: LedController;
+    comb {
+        led.data_in = cpu.io_data_out[0..24];
+        led.write =
+              cpu.io_write_out
+            & cpu.io_enable_out
+            & (cpu.io_address_out == 0xF);
+
+        led_r.d_out = led.r_out;
+        led_g.d_out = led.g_out;
+        led_b.d_out = led.b_out;
+
+        led.reset = reset40;
+        led.clk = clk40;
+    }
+
+    reg syscall_addr: bits<30>;
+    proc rising(clk40) {
+        if cpu.io_write_out & cpu.io_enable_out & cpu.k_flag_out & (cpu.io_address_out == 0xFFF) {
+            syscall_addr = cpu.io_data_out[2..32];
+        }
+    }
+
+    comb {
+        cpu.syscall_addr_in = syscall_addr;
+    }
+
+    reg io_addr_reg: bits<12>;
+    reg k_flag_reg: bit;
+    proc rising(clk40) {
+        io_addr_reg = cpu.io_address_out;
+        k_flag_reg = cpu.k_flag_out;
+    }
+
+    const DUMMY_VALUE = 0xAAAAAAAA;
+
+    comb {
+        cpu.io_data_in = match io_addr_reg {
+            0b0000_0000_0000..=0b0000_0000_0011 => serial.data_out as bits::<32>,
+            0b0000_0000_0100..=0b0000_0000_0111 => vdp.cpu_data_out,
+
+            0b0000_0000_1000 => cycle_count[ 0..32],
+            0b0000_0000_1001 => cycle_count[32..64],
+            0b0000_0000_1010 => stall_count[ 0..32],
+            0b0000_0000_1011 => stall_count[32..64],
+            0b0000_0000_1100 => timer[ 0..32],
+            0b0000_0000_1101 => timer[32..64],
+            0b0000_0000_1110 => DUMMY_VALUE as bits::<32>,
+            0b0000_0000_1111 => led.data_out as bits::<32>,
+
+            0b1111_1111_1111 => if k_flag_reg {
+                syscall_addr @ (0b00 as bits::<2>)
+            } else {
+                DUMMY_VALUE as bits::<32>
+            },
+
+            _ => DUMMY_VALUE as bits::<32>,
+        };
+    }
+}

@@ -1,0 +1,88 @@
+mod Fifo<BITS, COUNT_P2> (
+    in sig data_in: bits<BITS>,
+    out sig data_out: bits<BITS>,
+
+    in sig read: bit,
+    in sig write: bit,
+
+    out sig empty: bit,
+    out sig full: bit,
+    out reg count: bits<COUNT_BITS>,
+
+    in sig reset: bit,
+    in sig clk: bit,
+) {
+    const COUNT = 1 << COUNT_P2;
+    const COUNT_BITS = COUNT_P2 + 1;
+
+    reg mem: [bits<BITS>; COUNT];
+
+    comb {
+        empty = count == 0;
+        full = count == COUNT;
+    }
+
+    reg read_ptr: bits<COUNT_P2>;
+    reg write_ptr: bits<COUNT_P2>;
+
+    sig do_read: bit;
+    sig do_write: bit;
+    comb {
+        do_read = read & !empty;
+        do_write = write & !full;
+    }
+
+    sig next_read_ptr: bits<COUNT_P2>;
+    sig next_write_ptr: bits<COUNT_P2>;
+    sig next_count: bits<COUNT_BITS>;
+    sig perform_write: bit;
+    comb {
+        if reset {
+            next_read_ptr = 0 as bits::<COUNT_P2>;
+            next_write_ptr = 0 as bits::<COUNT_P2>;
+            next_count = 0 as bits::<COUNT_BITS>;
+
+            data_out = 0 as bits::<BITS>;
+            perform_write = 0 as bit;
+        } else if do_read & write {
+            // In this case it is fine to write even if the fifo is full
+            next_read_ptr = read_ptr + 1;
+            next_write_ptr = write_ptr + 1;
+            next_count = count;
+
+            data_out = mem[read_ptr];
+            perform_write = 1 as bit;
+        } else if do_read {
+            next_read_ptr = read_ptr + 1;
+            next_write_ptr = write_ptr;
+            next_count = count - 1;
+
+            data_out = mem[read_ptr];
+            perform_write = 0 as bit;
+        } else if do_write {
+            next_read_ptr = read_ptr;
+            next_write_ptr = write_ptr + 1;
+            next_count = count + 1;
+
+            data_out = 0 as bits::<BITS>;
+            perform_write = 1 as bit;
+        } else {
+            next_read_ptr = read_ptr;
+            next_write_ptr = write_ptr;
+            next_count = count;
+
+            data_out = 0 as bits::<BITS>;
+            perform_write = 0 as bit;
+        }
+    }
+
+    proc rising(clk) {
+        read_ptr = next_read_ptr;
+        write_ptr = next_write_ptr;
+        count = next_count;
+
+        if perform_write {
+            mem[write_ptr] = data_in;
+        }
+    }
+}

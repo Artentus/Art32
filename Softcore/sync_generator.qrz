@@ -1,0 +1,120 @@
+enum SyncState: bits<2> {
+    Front  = 0b00,
+    Sync   = 0b01,
+    Back   = 0b10,
+    Active = 0b11,
+}
+
+mod SyncGenerator<
+    H_FRONT_COUNT,
+    H_SYNC_COUNT,
+    H_BACK_COUNT,
+    H_ACTIVE_COUNT,
+
+    V_FRONT_COUNT,
+    V_SYNC_COUNT,
+    V_BACK_COUNT,
+    V_ACTIVE_COUNT,
+> (
+    out reg h_state: SyncState,
+    out reg v_state: SyncState,
+
+    out reg h_counter: bits<H_BIT_COUNT>,
+    out reg v_counter: bits<V_BIT_COUNT>,
+
+    out sig new_line: bit,
+    out sig new_frame: bit,
+
+    in sig reset: bit,
+    in sig pclk: bit,
+) {
+    const H_BIT_COUNT = clog2(H_ACTIVE_COUNT);
+    const V_BIT_COUNT = clog2(V_ACTIVE_COUNT);
+
+    comb {
+        new_line = (h_state == SyncState::Active) & (h_counter == (H_ACTIVE_COUNT - 1));
+        new_frame = (v_state == SyncState::Active) & (v_counter == (V_ACTIVE_COUNT - 1));
+    }
+
+    proc rising(pclk) {
+        if reset {
+            h_state = SyncState::Front;
+            v_state = SyncState::Front;
+
+            h_counter = 0 as bits::<H_BIT_COUNT>;
+            v_counter = 0 as bits::<V_BIT_COUNT>;
+        } else {
+            match h_state {
+                SyncState::Front => {
+                    if h_counter == (H_FRONT_COUNT - 1) {
+                        h_state = SyncState::Sync;
+                        h_counter = 0 as bits::<H_BIT_COUNT>;
+                    } else {
+                        h_counter = h_counter + 1;
+                    }
+                },
+                SyncState::Sync => {
+                    if h_counter == (H_SYNC_COUNT - 1) {
+                        h_state = SyncState::Back;
+                        h_counter = 0 as bits::<H_BIT_COUNT>;
+                    } else {
+                        h_counter = h_counter + 1;
+                    }
+                },
+                SyncState::Back => {
+                    if h_counter == (H_BACK_COUNT - 1) {
+                        h_state = SyncState::Active;
+                        h_counter = 0 as bits::<H_BIT_COUNT>;
+                    } else {
+                        h_counter = h_counter + 1;
+                    }
+                },
+                SyncState::Active => {
+                    if h_counter == (H_ACTIVE_COUNT - 1) {
+                        h_state = SyncState::Front;
+                        h_counter = 0 as bits::<H_BIT_COUNT>;
+                    } else {
+                        h_counter = h_counter + 1;
+                    }
+                },
+            }
+
+            if new_line {
+                match v_state {
+                    SyncState::Front => {
+                        if v_counter == (V_FRONT_COUNT - 1) {
+                            v_state = SyncState::Sync;
+                            v_counter = 0 as bits::<V_BIT_COUNT>;
+                        } else {
+                            v_counter = v_counter + 1;
+                        }
+                    },
+                    SyncState::Sync => {
+                        if v_counter == (V_SYNC_COUNT - 1) {
+                            v_state = SyncState::Back;
+                            v_counter = 0 as bits::<V_BIT_COUNT>;
+                        } else {
+                            v_counter = v_counter + 1;
+                        }
+                    },
+                    SyncState::Back => {
+                        if v_counter == (V_BACK_COUNT - 1) {
+                            v_state = SyncState::Active;
+                            v_counter = 0 as bits::<V_BIT_COUNT>;
+                        } else {
+                            v_counter = v_counter + 1;
+                        }
+                    },
+                    SyncState::Active => {
+                        if v_counter == (V_ACTIVE_COUNT - 1) {
+                            v_state = SyncState::Front;
+                            v_counter = 0 as bits::<V_BIT_COUNT>;
+                        } else {
+                            v_counter = v_counter + 1;
+                        }
+                    },
+                }
+            }
+        }
+    }
+}

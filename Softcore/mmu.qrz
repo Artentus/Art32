@@ -1,0 +1,42 @@
+mod Mmu (
+    in sig mem_page: bits<8>,
+    in sig mem_enable: bit,
+    in sig mem_write: bit,
+    in sig k_flag: bit,
+
+    out sig kram_write: bit,
+    out sig sram_write: bit,
+    out sig vram_write: bit,
+
+    in sig kram_data_in: bits<32>,
+    in sig sram_data_in: bits<32>,
+    in sig vram_data_in: bits<32>,
+    out sig data_out: bits<32>,
+
+    in sig reset: bit,
+    in sig clk: bit,
+) {
+    const DUMMY_VALUE = 0xAAAAAAAA;
+
+    comb {
+        kram_write = mem_enable & mem_write & (mem_page == 0x00) & k_flag;
+        sram_write = mem_enable & mem_write & (mem_page == 0x01);
+        vram_write = mem_enable & mem_write & (mem_page == 0x02);
+    }
+
+    reg mem_page_reg: bits<8>;
+    reg k_flag_reg: bit;
+    proc rising(clk) {
+        mem_page_reg = mem_page;
+        k_flag_reg = k_flag;
+    }
+
+    comb {
+        data_out = match mem_page_reg {
+            0x00 => if k_flag_reg { kram_data_in } else { DUMMY_VALUE as bits::<32> },
+            0x01 => sram_data_in,
+            0x02 => vram_data_in,
+            _ => DUMMY_VALUE as bits::<32>,
+        };
+    }
+}

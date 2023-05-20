@@ -1,0 +1,30 @@
+mod RegisterFile<BITS, COUNT> (
+    in sig lhs_select: bits<SELECT_BITS>,
+    in sig rhs_select: bits<SELECT_BITS>,
+    in sig load_select: bits<SELECT_BITS>,
+    in sig data_in: bits<BITS>,
+
+    out sig lhs_out: bits<BITS>,
+    out sig rhs_out: bits<BITS>,
+
+    in sig enable: bit,
+    in sig reset: bit,
+    in sig clk: bit,
+) {
+    const SELECT_BITS = clog2(COUNT);
+
+    reg regs: [bits<BITS>; COUNT];
+
+    proc rising(clk) {
+        if reset {
+            regs[0] = 0 as bits::<BITS>;
+        } else if enable & (load_select != (0 as bits::<SELECT_BITS>)) {
+            regs[load_select] = data_in;
+        }
+    }
+
+    comb {
+        lhs_out = regs[lhs_select];
+        rhs_out = regs[rhs_select];
+    }
+}

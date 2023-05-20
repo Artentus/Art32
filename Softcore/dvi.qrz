@@ -1,0 +1,210 @@
+enum TmdsMode: bit {
+    Control = 0b0,
+    Video   = 0b1,
+}
+
+extern mod TmdsEncoder (
+    in sig mode: TmdsMode,
+    in sig control_data: bits<2>,
+    in sig video_data: bits<8>,
+    out reg encoded: bits<10>,
+
+    in sig reset: bit,
+    in sig pclk: bit,
+);
+
+mod DviSerializer (
+    in sig r_in: bits<10>,
+    in sig g_in: bits<10>,
+    in sig b_in: bits<10>,
+
+    out sig r_out: bit,
+    out sig g_out: bit,
+    out sig b_out: bit,
+
+    in sig reset: bit,
+    in sig sclk: bit,
+    in sig pclk: bit,
+) {
+    reg ready: bit;
+    reg r_reg: bits<10>;
+    reg g_reg: bits<10>;
+    reg b_reg: bits<10>;
+    proc rising(pclk) {
+        if reset {
+            ready = 0 as bit;
+            r_reg = 0 as bits::<10>;
+            g_reg = 0 as bits::<10>;
+            b_reg = 0 as bits::<10>;
+        } else {
+            ready = 1 as bit;
+            r_reg = r_in;
+            g_reg = g_in;
+            b_reg = b_in;
+        }
+    }
+
+    reg counter: bits<3>;
+    proc rising(sclk) {
+        counter = if reset | !ready | (counter == 0b100) {
+            0 as bits::<3>
+        } else {
+            counter + 1
+        };
+    }
+
+    reg r_ddr_reg: bits<2>;
+    reg g_ddr_reg: bits<2>;
+    reg b_ddr_reg: bits<2>;
+    proc rising(sclk) {
+        match counter {
+            0b000 => {
+                r_ddr_reg = r_reg[0..2];
+                g_ddr_reg = g_reg[0..2];
+                b_ddr_reg = b_reg[0..2];
+            },
+            0b001 => {
+                r_ddr_reg = r_reg[2..4];
+                g_ddr_reg = g_reg[2..4];
+                b_ddr_reg = b_reg[2..4];
+            },
+            0b010 => {
+                r_ddr_reg = r_reg[4..6];
+                g_ddr_reg = g_reg[4..6];
+                b_ddr_reg = b_reg[4..6];
+            },
+            0b011 => {
+                r_ddr_reg = r_reg[6..8];
+                g_ddr_reg = g_reg[6..8];
+                b_ddr_reg = b_reg[6..8];
+            },
+            0b100 => {
+                r_ddr_reg = r_reg[8..10];
+                g_ddr_reg = g_reg[8..10];
+                b_ddr_reg = b_reg[8..10];
+            },
+            _ => {
+                r_ddr_reg = 0 as bits::<2>;
+                g_ddr_reg = 0 as bits::<2>;
+                b_ddr_reg = 0 as bits::<2>;
+            }
+        }
+    }
+
+    let ddr_r: DDR;
+    comb {
+        ddr_r.d_in = r_ddr_reg;
+        r_out = ddr_r.d_out;
+
+        ddr_r.reset = reset;
+        ddr_r.clk = sclk;
+    }
+
+    let ddr_g: DDR;
+    comb {
+        ddr_g.d_in = g_ddr_reg;
+        g_out = ddr_g.d_out;
+
+        ddr_g.reset = reset;
+        ddr_g.clk = sclk;
+    }
+
+    let ddr_b: DDR;
+    comb {
+        ddr_b.d_in = b_ddr_reg;
+        b_out = ddr_b.d_out;
+
+        ddr_b.reset = reset;
+        ddr_b.clk = sclk;
+    }
+}
+
+mod DviController (
+    in sig r_in: bits<8>,
+    in sig g_in: bits<8>,
+    in sig b_in: bits<8>,
+
+    in sig mode: TmdsMode,
+    in sig hsync: bit,
+    in sig vsync: bit,
+
+    out sig r_out: bit,
+    out sig g_out: bit,
+    out sig b_out: bit,
+
+    in sig reset: bit,
+    in sig sclk: bit,
+    in sig pclk: bit,
+) {
+    reg r_reg: bits<8>;
+    reg g_reg: bits<8>;
+    reg b_reg: bits<8>;
+    proc rising(pclk) {
+        if reset {
+            r_reg = 0 as bits::<8>;
+            g_reg = 0 as bits::<8>;
+            b_reg = 0 as bits::<8>;
+        } else {
+            r_reg = r_in;
+            g_reg = g_in;
+            b_reg = b_in;
+        }
+    }
+
+    reg mode_reg: TmdsMode;
+    reg control_data_reg: bits<2>;
+    proc rising(pclk) {
+        if reset {
+            mode_reg = TmdsMode::Control;
+            control_data_reg = 0 as bits::<2>;
+        } else {
+            mode_reg = mode;
+            control_data_reg = vsync @ hsync;
+        }
+    }
+
+    let b_encoder: TmdsEncoder;
+    comb {
+        b_encoder.mode = mode_reg;
+        b_encoder.control_data = control_data_reg;
+        b_encoder.video_data = b_reg;
+
+        b_encoder.reset = reset;
+        b_encoder.pclk = pclk;
+    }
+
+    let g_encoder: TmdsEncoder;
+    comb {
+        g_encoder.mode = mode_reg;
+        g_encoder.control_data = 0 as bits::<2>;
+        g_encoder.video_data = g_reg;
+
+        g_encoder.reset = reset;
+        g_encoder.pclk = pclk;
+    }
+
+    let r_encoder: TmdsEncoder;
+    comb {
+        r_encoder.mode = mode_reg;
+        r_encoder.control_data = 0 as bits::<2>;
+        r_encoder.video_data = r_reg;
+
+        r_encoder.reset = reset;
+        r_encoder.pclk = pclk;
+    }
+
+    let serializer: DviSerializer;
+    comb {
+        serializer.r_in = r_encoder.encoded;
+        serializer.g_in = g_encoder.encoded;
+        serializer.b_in = b_encoder.encoded;
+
+        r_out = serializer.r_out;
+        g_out = serializer.g_out;
+        b_out = serializer.b_out;
+
+        serializer.reset = reset;
+        serializer.sclk = sclk;
+        serializer.pclk = pclk;
+    }
+}

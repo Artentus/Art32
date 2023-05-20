@@ -1,0 +1,244 @@
+const BITMAP_COUNT = 1024;
+const BITMAP_ROWS = 8;
+const BITMAP_INDEX_BITS = clog2(BITMAP_COUNT);
+const BITMAP_ROW_BITS = clog2(BITMAP_ROWS);
+
+mod BitmapMemory (
+    in sig cpu_address: bits<ADDR_BITS>,
+    in sig cpu_data_in: bits<32>,
+    out reg cpu_data_out: bits<32>,
+    in sig cpu_byte_enable: bits<4>,
+    in sig cpu_write: bit,
+
+    in sig vdp_bitmap_index: bits<BITMAP_INDEX_BITS>,
+    in sig vdp_bitmap_row: bits<BITMAP_ROW_BITS>,
+    out reg vdp_row_data_out: bits<32>,
+
+    in sig cpu_clk: bit,
+    in sig vdp_clk: bit,
+) {
+    const MEM_SIZE = BITMAP_COUNT * BITMAP_ROWS;
+    const ADDR_BITS = clog2(MEM_SIZE);
+    
+    #[no_rw_check]
+    reg mem: [bits<32>; MEM_SIZE];
+
+    // CPU port
+    proc rising(cpu_clk) {
+        if cpu_write {
+            if cpu_byte_enable[0] {
+                mem[cpu_address][0..8] = cpu_data_in[0..8];
+            }
+            if cpu_byte_enable[1] {
+                mem[cpu_address][8..16] = cpu_data_in[8..16];
+            }
+            if cpu_byte_enable[2] {
+                mem[cpu_address][16..24] = cpu_data_in[16..24];
+            }
+            if cpu_byte_enable[3] {
+                mem[cpu_address][24..32] = cpu_data_in[24..32];
+            }
+        } else {
+            cpu_data_out = mem[cpu_address];
+        }
+    }
+
+    // VDP port
+    proc rising(vdp_clk) {
+        vdp_row_data_out = mem[vdp_bitmap_index @ vdp_bitmap_row];
+    }
+}
+
+const PALETTE_COUNT = 64;
+const COLOR_COUNT = 16;
+const PALETTE_INDEX_BITS = clog2(PALETTE_COUNT);
+const COLOR_INDEX_BITS = clog2(COLOR_COUNT);
+
+mod PaletteMemory (
+    in sig cpu_address: bits<ADDR_BITS>,
+    in sig cpu_data_in: bits<32>,
+    out reg cpu_data_out: bits<32>,
+    in sig cpu_byte_enable: bits<4>,
+    in sig cpu_write: bit,
+
+    in sig vdp_palette_index: bits<PALETTE_INDEX_BITS>,
+    in sig vdp_color_index: bits<COLOR_INDEX_BITS>,
+    out reg vdp_color_out: bits<24>,
+
+    in sig cpu_clk: bit,
+    in sig vdp_clk: bit,
+) {
+    const MEM_SIZE = PALETTE_COUNT * COLOR_COUNT;
+    const ADDR_BITS = clog2(MEM_SIZE);
+    
+    #[no_rw_check]
+    reg mem: [bits<24>; MEM_SIZE];
+
+    // CPU port
+    proc rising(cpu_clk) {
+        if cpu_write {
+            if cpu_byte_enable[0] {
+                mem[cpu_address][0..8] = cpu_data_in[0..8];
+            }
+            if cpu_byte_enable[1] {
+                mem[cpu_address][8..16] = cpu_data_in[8..16];
+            }
+            if cpu_byte_enable[2] {
+                mem[cpu_address][16..24] = cpu_data_in[16..24];
+            }
+        } else {
+            cpu_data_out = mem[cpu_address] as bits::<32>;
+        }
+    }
+
+    // VDP port
+    proc rising(vdp_clk) {
+        vdp_color_out = mem[vdp_palette_index @ vdp_color_index];
+    }
+}
+
+const TILEMAP_WIDTH = 64;
+const TILEMAP_HEIGHT = 64;
+const TILE_COUNT = TILEMAP_WIDTH * TILEMAP_HEIGHT;
+const TILE_COLUMN_BITS = clog2(TILEMAP_WIDTH);
+const TILE_ROW_BITS = clog2(TILEMAP_HEIGHT);
+
+mod TilemapMemory (
+    in sig cpu_address: bits<ADDR_BITS>,
+    in sig cpu_data_in: bits<32>,
+    out reg cpu_data_out: bits<32>,
+    in sig cpu_byte_enable: bits<4>,
+    in sig cpu_write: bit,
+
+    in sig vdp_tile_column: bits<TILE_COLUMN_BITS>,
+    in sig vdp_tile_row: bits<TILE_ROW_BITS>,
+    out sig vdp_bitmap_index_out: bits<BITMAP_INDEX_BITS>,
+    out sig vdp_palette_index_out: bits<PALETTE_INDEX_BITS>,
+
+    in sig cpu_clk: bit,
+    in sig vdp_clk: bit,
+) {
+    const TILE_SIZE = BITMAP_INDEX_BITS + PALETTE_INDEX_BITS;
+    const ADDR_BITS = clog2(TILE_COUNT);
+
+    #[no_rw_check]
+    reg tiles: [bits<32>; TILE_COUNT];
+
+    // CPU port
+    proc rising(cpu_clk) {
+        if cpu_write {
+            if cpu_byte_enable[0] {
+                tiles[cpu_address][0..8] = cpu_data_in[0..8];
+            }
+            if cpu_byte_enable[1] {
+                tiles[cpu_address][8..16] = cpu_data_in[8..16];
+            }
+            if cpu_byte_enable[2] {
+                tiles[cpu_address][16..24] = cpu_data_in[16..24];
+            }
+            if cpu_byte_enable[3] {
+                tiles[cpu_address][24..32] = cpu_data_in[24..32];
+            }
+        } else {
+            cpu_data_out = tiles[cpu_address][0..TILE_SIZE] as bits::<32>;
+        }
+    }
+
+    // VDP port
+    reg tile_out: bits<TILE_SIZE>;
+    proc rising(vdp_clk) {
+        tile_out = tiles[vdp_tile_column @ vdp_tile_row][0..TILE_SIZE];
+    }
+
+    comb {
+        vdp_bitmap_index_out = tile_out[0..BITMAP_INDEX_BITS];
+        vdp_palette_index_out = tile_out[BITMAP_INDEX_BITS..TILE_SIZE];
+    }
+}
+
+mod VideoRam (
+    in sig cpu_address: bits<22>,
+    in sig cpu_data_in: bits<32>,
+    out sig cpu_data_out: bits<32>,
+    in sig cpu_byte_enable: bits<4>,
+    in sig cpu_write: bit,
+
+    in sig vdp_bitmap_index: bits<BITMAP_INDEX_BITS>,
+    in sig vdp_bitmap_row: bits<BITMAP_ROW_BITS>,
+    out sig vdp_row_data_out: bits<32>,
+
+    in sig vdp_palette_index: bits<PALETTE_INDEX_BITS>,
+    in sig vdp_color_index: bits<COLOR_INDEX_BITS>,
+    out sig vdp_color_out: bits<24>,
+
+    in sig vdp_tile_column: bits<TILE_COLUMN_BITS>,
+    in sig vdp_tile_row: bits<TILE_ROW_BITS>,
+    out sig vdp_bitmap_index_out: bits<BITMAP_INDEX_BITS>,
+    out sig vdp_palette_index_out: bits<PALETTE_INDEX_BITS>,
+
+    in sig cpu_clk: bit,
+    in sig vdp_clk: bit,
+) {
+    const BITMAP_ADDR_BITS = clog2(BITMAP_COUNT * BITMAP_ROWS);
+    let bitmaps: BitmapMemory;
+    comb {
+        bitmaps.cpu_address = cpu_address[0..BITMAP_ADDR_BITS];
+        bitmaps.cpu_data_in = cpu_data_in;
+        bitmaps.cpu_byte_enable = cpu_byte_enable;
+        bitmaps.cpu_write = cpu_write & (cpu_address[20..22] == 0b00);
+
+        bitmaps.vdp_bitmap_index = vdp_bitmap_index;
+        bitmaps.vdp_bitmap_row = vdp_bitmap_row;
+        vdp_row_data_out = bitmaps.vdp_row_data_out;
+
+        bitmaps.cpu_clk = cpu_clk;
+        bitmaps.vdp_clk = vdp_clk;
+    }
+
+    const PALETTE_ADDR_BITS = clog2(PALETTE_COUNT * COLOR_COUNT);
+    let palettes: PaletteMemory;
+    comb {
+        palettes.cpu_address = cpu_address[0..PALETTE_ADDR_BITS];
+        palettes.cpu_data_in = cpu_data_in;
+        palettes.cpu_byte_enable = cpu_byte_enable;
+        palettes.cpu_write = cpu_write & (cpu_address[20..22] == 0b01);
+
+        palettes.vdp_palette_index = vdp_palette_index;
+        palettes.vdp_color_index = vdp_color_index;
+        vdp_color_out = palettes.vdp_color_out;
+
+        palettes.cpu_clk = cpu_clk;
+        palettes.vdp_clk = vdp_clk;
+    }
+
+    const TILEMAP_ADDR_BITS = clog2(TILE_COUNT);
+    let tilemap: TilemapMemory;
+    comb {
+        tilemap.cpu_address = cpu_address[0..TILEMAP_ADDR_BITS];
+        tilemap.cpu_data_in = cpu_data_in;
+        tilemap.cpu_byte_enable = cpu_byte_enable;
+        tilemap.cpu_write = cpu_write & (cpu_address[20..22] == 0b10);
+
+        tilemap.vdp_tile_column = vdp_tile_column;
+        tilemap.vdp_tile_row = vdp_tile_row;
+        vdp_bitmap_index_out = tilemap.vdp_bitmap_index_out;
+        vdp_palette_index_out = tilemap.vdp_palette_index_out;
+
+        tilemap.cpu_clk = cpu_clk;
+        tilemap.vdp_clk = vdp_clk;
+    }
+
+    reg select_reg: bits<2>;
+    proc rising(cpu_clk) {
+        select_reg = cpu_address[20..22];
+    }
+
+    comb {
+        cpu_data_out = match select_reg {
+            0b00 => bitmaps.cpu_data_out,
+            0b01 => palettes.cpu_data_out,
+            0b10 => tilemap.cpu_data_out,
+            0b11 => 0 as bits::<32>,
+        };
+    }
+}

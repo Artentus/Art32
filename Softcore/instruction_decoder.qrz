@@ -1,0 +1,281 @@
+mod InstructionDecoder (
+    in sig instruction_word: bits<32>,
+
+    out sig alu_op_out: AluOp,
+    out sig move_condition_out: Condition,
+    out sig jump_condition_out: Condition,
+    out sig load_flags_out: bit,
+    out sig reg_lhs_select_out: bits<5>,
+    out sig reg_rhs_select_out: bits<5>,
+    out sig reg_load_select_out: bits<5>,
+    out sig lhs_bus_source_out: LhsBusSource,
+    out sig rhs_bus_source_out: RhsBusSource,
+    out sig data_bus_source_out: DataBusSource,
+    out sig mem_enable_out: bit,
+    out sig mem_mode_out: MemoryMode,
+    out sig mem_sign_ext_out: bit,
+    out sig mem_write_out: bit,
+    out sig set_k_flag_out: bit,
+    out sig clear_k_flag_out: bit,
+
+    out sig imm_out: bits<32>,
+) {
+    sig alu_op: AluOp;
+    comb {
+        alu_op = match instruction_word[3..7] {
+            0x0 => AluOp::Add,
+            0x1 => AluOp::AddC,
+            0x2 => AluOp::Sub,
+            0x3 => AluOp::SubB,
+            0x4 => AluOp::And,
+            0x5 => AluOp::Or,
+            0x6 => AluOp::Xor,
+            0x7 => AluOp::Shl,
+            0x8 => AluOp::Lsr,
+            0x9 => AluOp::Asr,
+            0xA => AluOp::Mul,
+            0xB => AluOp::MulHuu,
+            0xC => AluOp::MulHss,
+            0xD => AluOp::MulHus,
+            0xE => AluOp::Cond,
+            0xF => AluOp::Nop,
+        };
+    }
+
+    sig condition: Condition;
+    comb {
+        condition = match instruction_word[3..7] {
+            0x0 => Condition::Never,
+            0x1 => Condition::Carry,
+            0x2 => Condition::Zero,
+            0x3 => Condition::Signed,
+            0x4 => Condition::Overflow,
+            0x5 => Condition::NotCarry,
+            0x6 => Condition::NotZero,
+            0x7 => Condition::NotSigned,
+            0x8 => Condition::NotOverflow,
+            0x9 => Condition::UnsignedLessEqual,
+            0xA => Condition::UnsignedGreater,
+            0xB => Condition::SignedLess,
+            0xC => Condition::SignedGreaterEqual,
+            0xD => Condition::SignedLessEqual,
+            0xE => Condition::SignedGreater,
+            0xF => Condition::Always,
+        };
+    }
+
+    sig mem_mode: MemoryMode;
+    comb {
+        mem_mode = match instruction_word[3..5] {
+            0b00 => MemoryMode::Bits32,
+            0b01 => MemoryMode::Bits8,
+            0b10 => MemoryMode::Bits16,
+            0b11 => MemoryMode::IO,
+        };
+    }
+
+    sig op_code: OpCode;
+    comb {
+        op_code = match instruction_word[0..3] {
+            0b000 => {
+                match instruction_word[6] {
+                    0b0 => OpCode::Nop,
+                    0b1 => OpCode::System,
+                }
+            },
+            0b001 => {
+                if alu_op == AluOp::Nop {
+                    OpCode::Nop
+                } else {
+                    OpCode::AluRegReg
+                }
+            },
+            0b010 => {
+                if alu_op == AluOp::Nop {
+                    OpCode::Nop
+                } else {
+                    OpCode::AluRegImm
+                }
+            },
+            0b011 => {
+                match instruction_word[6] {
+                    0b0 => OpCode::Load,
+                    0b1 => OpCode::Store,
+                }
+            },
+            0b100 => {
+                match instruction_word[6] {
+                    0b0 => OpCode::Jump,
+                    0b1 => OpCode::UI,
+                }
+            },
+            0b101 => OpCode::Branch,
+            0b110 => {
+                if condition == Condition::Never {
+                    OpCode::Nop
+                } else {
+                    OpCode::MoveRegReg
+                }
+            },
+            0b111 => {
+                if condition == Condition::Never {
+                    OpCode::Nop
+                } else {
+                    OpCode::MoveRegImm
+                }
+            },
+        };
+    }
+
+    sig reg_load: bits<5>;
+    sig reg_lhs: bits<5>;
+    sig reg_rhs: bits<5>;
+    comb {
+        reg_load = instruction_word[ 7..12];
+        reg_lhs  = instruction_word[12..17];
+        reg_rhs  = instruction_word[17..22];
+    }
+
+    let imm_decoder: ImmediateDecoder;
+    comb {
+        imm_decoder.instruction_word = instruction_word;
+        imm_decoder.op_code = op_code;
+
+        imm_out = imm_decoder.imm;
+    }
+
+    comb {
+        // Defaults, result in a NOP if unchanged
+        alu_op_out = AluOp::Nop;
+        move_condition_out = Condition::Never;
+        jump_condition_out = Condition::Never;
+        load_flags_out = 0 as bit;
+        reg_lhs_select_out = 0 as bits::<5>;
+        reg_rhs_select_out = 0 as bits::<5>;
+        reg_load_select_out = 0 as bits::<5>;
+        lhs_bus_source_out = LhsBusSource::Register;
+        rhs_bus_source_out = RhsBusSource::Register;
+        data_bus_source_out = DataBusSource::Result;
+        mem_enable_out = 0 as bit;
+        mem_mode_out = MemoryMode::Bits32;
+        mem_sign_ext_out = 0 as bit;
+        mem_write_out = 0 as bit;
+        set_k_flag_out = 0 as bit;
+        clear_k_flag_out = 0 as bit;
+
+        // Set every signal we care about explicitely, even if it's the default
+        match op_code {
+            OpCode::System => {
+                match instruction_word[3] {
+                    0b0 => {
+                        alu_op_out = AluOp::Cond;
+                        move_condition_out = Condition::Always;
+                        jump_condition_out = Condition::Always;
+                        reg_load_select_out = reg_load;
+                        lhs_bus_source_out = LhsBusSource::Syscall;
+                        rhs_bus_source_out = RhsBusSource::Pc;
+                        data_bus_source_out = DataBusSource::Result;
+                        set_k_flag_out = 1 as bit;
+                    },
+                    0b1 => {
+                        clear_k_flag_out = 1 as bit;
+                    },
+                }
+            },
+            OpCode::AluRegReg => {
+                alu_op_out = alu_op;
+                load_flags_out = 1 as bit;
+                reg_lhs_select_out = reg_lhs;
+                reg_rhs_select_out = reg_rhs;
+                reg_load_select_out = reg_load;
+                lhs_bus_source_out = LhsBusSource::Register;
+                rhs_bus_source_out = RhsBusSource::Register;
+                data_bus_source_out = DataBusSource::Result;
+            },
+            OpCode::AluRegImm => {
+                alu_op_out = alu_op;
+                load_flags_out = 1 as bit;
+                reg_lhs_select_out = reg_lhs;
+                reg_load_select_out = reg_load;
+                lhs_bus_source_out = LhsBusSource::Register;
+                rhs_bus_source_out = RhsBusSource::Immediate;
+                data_bus_source_out = DataBusSource::Result;
+            },
+            OpCode::Load => {
+                reg_lhs_select_out = reg_lhs;
+                reg_load_select_out = reg_load;
+                lhs_bus_source_out = LhsBusSource::Register;
+                data_bus_source_out = DataBusSource::Memory;
+                mem_enable_out = 1 as bit;
+                mem_mode_out = mem_mode;
+                mem_sign_ext_out = instruction_word[5];
+            },
+            OpCode::Store => {
+                reg_lhs_select_out = reg_lhs;
+                reg_rhs_select_out = reg_load;
+                lhs_bus_source_out = LhsBusSource::Register;
+                rhs_bus_source_out = RhsBusSource::Register;
+                mem_enable_out = 1 as bit;
+                mem_mode_out = mem_mode;
+                mem_write_out = 1 as bit;
+            },
+            OpCode::Branch => {
+                alu_op_out = AluOp::Cond;
+                move_condition_out = Condition::Always;
+                jump_condition_out = condition;
+                reg_load_select_out = reg_load;
+                lhs_bus_source_out = LhsBusSource::Pc;
+                rhs_bus_source_out = RhsBusSource::Pc;
+                data_bus_source_out = DataBusSource::Result;
+            },
+            OpCode::MoveRegReg => {
+                alu_op_out = AluOp::Cond;
+                move_condition_out = condition;
+                reg_lhs_select_out = reg_lhs;
+                reg_rhs_select_out = reg_rhs;
+                reg_load_select_out = reg_load;
+                lhs_bus_source_out = LhsBusSource::Register;
+                rhs_bus_source_out = RhsBusSource::Register;
+                data_bus_source_out = DataBusSource::Result;
+            },
+            OpCode::MoveRegImm => {
+                alu_op_out = AluOp::Cond;
+                move_condition_out = condition;
+                reg_lhs_select_out = reg_lhs;
+                reg_load_select_out = reg_load;
+                lhs_bus_source_out = LhsBusSource::Register;
+                rhs_bus_source_out = RhsBusSource::Immediate;
+                data_bus_source_out = DataBusSource::Result;
+            },
+            OpCode::Jump => {
+                alu_op_out = AluOp::Cond;
+                move_condition_out = Condition::Always;
+                jump_condition_out = Condition::Always;
+                reg_lhs_select_out = reg_lhs;
+                reg_load_select_out = reg_load;
+                lhs_bus_source_out = LhsBusSource::Register;
+                rhs_bus_source_out = RhsBusSource::Pc;
+                data_bus_source_out = DataBusSource::Result;
+            },
+            OpCode::UI => {
+                match instruction_word[3] {
+                    0b0 => {
+                        alu_op_out = AluOp::Cond;
+                        move_condition_out = Condition::Always;
+                        reg_load_select_out = reg_load;
+                        rhs_bus_source_out = RhsBusSource::Immediate;
+                        data_bus_source_out = DataBusSource::Result;
+                    },
+                    0b1 => {
+                        alu_op_out = AluOp::Add;
+                        reg_load_select_out = reg_load;
+                        lhs_bus_source_out = LhsBusSource::Pc;
+                        rhs_bus_source_out = RhsBusSource::Immediate;
+                        data_bus_source_out = DataBusSource::Result;
+                    },
+                }
+            },
+            _ => {},
+        }
+    }
+}

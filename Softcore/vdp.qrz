@@ -1,0 +1,178 @@
+mod Vdp (
+    out sig bitmap_index: bits<BITMAP_INDEX_BITS>,
+    out sig bitmap_row: bits<BITMAP_ROW_BITS>,
+    in sig row_data_in: bits<32>,
+
+    out sig palette_index: bits<PALETTE_INDEX_BITS>,
+    out sig color_index: bits<COLOR_INDEX_BITS>,
+    in sig color_in: bits<24>,
+
+    out sig tile_column: bits<TILE_COLUMN_BITS>,
+    out sig tile_row: bits<TILE_ROW_BITS>,
+    in sig bitmap_index_in: bits<BITMAP_INDEX_BITS>,
+    in sig palette_index_in: bits<PALETTE_INDEX_BITS>,
+
+    out sig r_out: bit,
+    out sig g_out: bit,
+    out sig b_out: bit,
+
+    in sig reset: bit,
+    in sig sclk: bit,
+    in sig pclk: bit,
+
+    in sig cpu_addr_in: bits<2>,
+    in sig cpu_data_in: bits<32>,
+    out sig cpu_data_out: bits<32>,
+    in sig cpu_write: bit,
+) {
+    // 800x600
+    let sync: SyncGenerator<
+        40, 128, 88, 800,
+         1,   4, 23, 600,
+    >;
+    comb {
+        sync.reset = reset;
+        sync.pclk = pclk;
+    }
+
+    reg h_offset: bits<9>;
+    reg v_offset: bits<9>;
+    proc rising(pclk) {
+        if reset {
+            h_offset = 0 as bits::<9>;
+            v_offset = 0 as bits::<9>;
+        } else if cpu_write {
+            match cpu_addr_in {
+                0b00 => {
+                    h_offset = cpu_data_in[0..9];
+                },
+                0b01 => {
+                    v_offset = cpu_data_in[0..9];
+                },
+                _ => {}
+            }
+        }
+    }
+
+    reg cpu_addr_reg: bits<2>;
+    proc rising(pclk) {
+        cpu_addr_reg = cpu_addr_in;
+    }
+
+    comb {
+        cpu_data_out = match cpu_addr_reg {
+            0b00 => h_offset as bits::<32>,
+            0b01 => v_offset as bits::<32>,
+            0b10 => (sync.h_state != SyncState::Active) as bits::<32>,
+            0b11 => (sync.v_state != SyncState::Active) as bits::<32>,
+        };
+    }
+
+    sig h_pixel: bits<9>;
+    sig v_pixel: bits<9>;
+    comb {
+        h_pixel = sync.h_counter[1..10] + h_offset;
+        v_pixel = sync.v_counter[1..10] + v_offset;
+    }
+
+    reg active_reg: [bit; 4];
+    reg hsync_reg: [bit; 4];
+    reg vsync_reg: [bit; 4];
+    proc rising(pclk) {
+        active_reg[0] = (sync.h_state == SyncState::Active) & (sync.v_state == SyncState::Active);
+        hsync_reg[0] = sync.h_state == SyncState::Sync;
+        vsync_reg[0] = sync.v_state == SyncState::Sync;
+
+        active_reg[1] = active_reg[0];
+        active_reg[2] = active_reg[1];
+        active_reg[3] = active_reg[2];
+
+        hsync_reg[1] = hsync_reg[0];
+        hsync_reg[2] = hsync_reg[1];
+        hsync_reg[3] = hsync_reg[2];
+
+        vsync_reg[1] = vsync_reg[0];
+        vsync_reg[2] = vsync_reg[1];
+        vsync_reg[3] = vsync_reg[2];
+    }
+
+    sig active: bit;
+    sig hsync: bit;
+    sig vsync: bit;
+    comb {
+        active = active_reg[3];
+        hsync = hsync_reg[3];
+        vsync = vsync_reg[3];
+    }
+
+    // Stage 1
+    comb {
+        tile_column = h_pixel[3..9];
+        tile_row = v_pixel[3..9];
+    }
+
+    reg bitmap_col_latch_1: bits<3>;
+    reg bitmap_row_latch: bits<3>;
+    proc rising(pclk) {
+        bitmap_col_latch_1 = h_pixel[0..3];
+        bitmap_row_latch = v_pixel[0..3];
+        // bitmap_index_in is latched
+        // palette_index_in is latched
+    }
+
+    // Stage 2
+    comb {
+        bitmap_index = bitmap_index_in;
+        bitmap_row = bitmap_row_latch;
+    }
+
+    reg bitmap_col_latch_2: bits<3>;
+    reg palette_index_latch_1: bits<6>;
+    proc rising(pclk) {
+        bitmap_col_latch_2 = bitmap_col_latch_1;
+        palette_index_latch_1 = palette_index_in;
+        // row_data_in is latched
+    }
+
+    // Stage 3
+    reg palette_index_latch_2: bits<6>;
+    reg bitmap_pixel_latch: bits<4>;
+    proc rising(pclk) {
+        palette_index_latch_2 = palette_index_latch_1;
+        bitmap_pixel_latch = match bitmap_col_latch_2 {
+            0b000 => row_data_in[ 0.. 4],
+            0b001 => row_data_in[ 4.. 8],
+            0b010 => row_data_in[ 8..12],
+            0b011 => row_data_in[12..16],
+            0b100 => row_data_in[16..20],
+            0b101 => row_data_in[20..24],
+            0b110 => row_data_in[24..28],
+            0b111 => row_data_in[28..32],
+        };
+    }
+
+    // Stage 4
+    comb {
+        palette_index = palette_index_latch_2;
+        color_index = bitmap_pixel_latch;
+    }
+
+    let dvi: DviController;
+    comb {
+        dvi.r_in = color_in[0..8];
+        dvi.g_in = color_in[8..16];
+        dvi.b_in = color_in[16..24];
+
+        dvi.mode = if active { TmdsMode::Video } else { TmdsMode::Control };
+        dvi.hsync = hsync;
+        dvi.vsync = vsync;
+
+        r_out = dvi.r_out;
+        g_out = dvi.g_out;
+        b_out = dvi.b_out;
+
+        dvi.reset = reset;
+        dvi.sclk = sclk;
+        dvi.pclk = pclk;
+    }
+}

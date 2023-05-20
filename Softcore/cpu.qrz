@@ -1,0 +1,358 @@
+mod Cpu (
+    out sig instruction_address_out: bits<32>,
+    in sig instruction_word_in: bits<32>,
+    out sig fetch_request: bit,
+
+    out sig mem_address_out: bits<30>,
+    out sig mem_data_out: bits<32>,
+    in sig mem_data_in: bits<32>,
+    out sig mem_enable_out: bit,
+    out sig mem_byte_enable_out: bits<4>,
+    out sig mem_write_out: bit,
+
+    out sig io_address_out: bits<12>,
+    out sig io_data_out: bits<32>,
+    in sig io_data_in: bits<32>,
+    out sig io_enable_out: bit,
+    out sig io_write_out: bit,
+
+    out sig k_flag_out: bit,
+    out sig stall_out: bit,
+    in sig syscall_addr_in: bits<30>,
+
+    in sig enable: bit,
+    in sig reset: bit,
+    in sig clk: bit,
+) {
+    let alu: Alu<32>;
+    let move_condition_unit: ConditionUnit;
+    let jump_condition_unit: ConditionUnit;
+    let flag_register: FlagRegister;
+    let kernel_mode_register: KernelModeRegister;
+    let program_counter: ProgramCounter<32>;
+    let register_file: RegisterFile<32, 32>;
+    let instruction_decoder: InstructionDecoder;
+    let swizzle: DataSwizzle;
+    comb {
+        flag_register.enable = enable;
+        flag_register.clk = clk;
+
+        kernel_mode_register.enable = enable;
+        kernel_mode_register.reset = reset;
+        kernel_mode_register.clk = clk;
+
+        program_counter.enable = enable;
+        program_counter.reset = reset;
+        program_counter.clk = clk;
+
+        register_file.enable = enable;
+        register_file.reset = reset;
+        register_file.clk = clk;
+
+        swizzle.clk = clk;
+    }
+
+    sig stall_execute: bit;
+    sig stall_fetch: bit;
+    sig inc_pc: bit;
+    comb {
+        stall_execute =
+            (
+                (instruction_decoder.lhs_bus_source_out == LhsBusSource::Register)
+                & (instruction_decoder.reg_lhs_select_out != 0)
+                & (instruction_decoder.reg_lhs_select_out == reg_load_select_2)
+                & (data_bus_source_2 != DataBusSource::Result)
+            )
+            | (
+                (instruction_decoder.rhs_bus_source_out == RhsBusSource::Register)
+                & (instruction_decoder.reg_rhs_select_out != 0)
+                & (instruction_decoder.reg_rhs_select_out == reg_load_select_2)
+                & (data_bus_source_2 != DataBusSource::Result)
+            )
+            | (
+                (instruction_decoder.lhs_bus_source_out == LhsBusSource::Register)
+                & (instruction_decoder.reg_lhs_select_out != 0)
+                & (instruction_decoder.reg_lhs_select_out == reg_load_select_3)
+                & (data_bus_source_3 != DataBusSource::Result)
+            )
+            | (
+                (instruction_decoder.rhs_bus_source_out == RhsBusSource::Register)
+                & (instruction_decoder.reg_rhs_select_out != 0)
+                & (instruction_decoder.reg_rhs_select_out == reg_load_select_3)
+                & (data_bus_source_3 != DataBusSource::Result)
+            );
+        
+        stall_fetch =
+            (instruction_decoder.jump_condition_out != Condition::Never)
+            | jump_condition_unit.conditional;
+
+        inc_pc = !stall_execute & !stall_fetch;
+    }
+
+    comb {
+        stall_out = stall_execute | stall_fetch;
+    }
+
+    // ------------- Forwarding -------------
+    sig lhs_bus_source: LhsBusSource;
+    sig rhs_bus_source: RhsBusSource;
+    comb {
+        lhs_bus_source = if instruction_decoder.lhs_bus_source_out == LhsBusSource::Register {
+            if instruction_decoder.reg_lhs_select_out == 0 {
+                instruction_decoder.lhs_bus_source_out
+            } else if instruction_decoder.reg_lhs_select_out == reg_load_select_2 {
+                LhsBusSource::Forward3
+            } else if instruction_decoder.reg_lhs_select_out == reg_load_select_3 {
+                LhsBusSource::Forward4
+            } else if instruction_decoder.reg_lhs_select_out == reg_load_select_4 {
+                LhsBusSource::Forward5
+            } else {
+                instruction_decoder.lhs_bus_source_out
+            }
+        } else {
+            instruction_decoder.lhs_bus_source_out
+        };
+        
+        rhs_bus_source = if instruction_decoder.rhs_bus_source_out == RhsBusSource::Register {
+            if instruction_decoder.reg_rhs_select_out == 0 {
+                instruction_decoder.rhs_bus_source_out
+            } else if instruction_decoder.reg_rhs_select_out == reg_load_select_2 {
+                RhsBusSource::Forward3
+            } else if instruction_decoder.reg_rhs_select_out == reg_load_select_3 {
+                RhsBusSource::Forward4
+            } else if instruction_decoder.reg_rhs_select_out == reg_load_select_4 {
+                RhsBusSource::Forward5
+            } else {
+                instruction_decoder.rhs_bus_source_out
+            }
+        } else {
+            instruction_decoder.rhs_bus_source_out
+        };
+    }
+    // --------------------------------------
+
+    // ------------- Stage 1 (Fetch) -------------
+    comb {
+        instruction_address_out = program_counter.pc_next_out;
+        fetch_request = !reset & !stall_execute & !stall_fetch;
+
+        program_counter.inc = inc_pc;
+    }
+    // -------------------------------------------
+
+    reg ir: bits<32>;
+    proc rising(clk) {
+        if enable | reset {
+            ir = if reset {
+                0 as bits::<32>
+            } else if stall_execute {
+                ir
+            } else if stall_fetch {
+                0 as bits::<32>
+            } else {
+                instruction_word_in
+            };
+        }
+    }
+
+    // ------------- Stage 2 (Decode) -------------
+    sig lhs_mux: bits<32>;
+    sig rhs_mux: bits<32>;
+    comb {
+        instruction_decoder.instruction_word = ir;
+
+        register_file.lhs_select = instruction_decoder.reg_lhs_select_out;
+        register_file.rhs_select = instruction_decoder.reg_rhs_select_out;
+
+        kernel_mode_register.set = instruction_decoder.set_k_flag_out;
+        kernel_mode_register.clear = instruction_decoder.clear_k_flag_out;
+
+        lhs_mux = match lhs_bus_source {
+            LhsBusSource::Register => register_file.lhs_out,
+            LhsBusSource::Pc       => program_counter.pc_value_out,
+            LhsBusSource::Syscall  => syscall_addr_in @ (0 as bits::<2>),
+            LhsBusSource::Forward3 => alu.result,
+            LhsBusSource::Forward4 => result,
+            LhsBusSource::Forward5 => data_bus,
+        };
+
+        rhs_mux = match rhs_bus_source {
+            RhsBusSource::Register  => register_file.rhs_out,
+            RhsBusSource::Pc        => program_counter.pc_value_out,
+            RhsBusSource::Immediate => instruction_decoder.imm_out,
+            RhsBusSource::Forward3  => alu.result,
+            RhsBusSource::Forward4  => result,
+            RhsBusSource::Forward5  => data_bus,
+        };
+    }
+    // --------------------------------------------
+
+    reg lhs: bits<32>;
+    reg rhs: bits<32>;
+    reg offset: bits<32>;
+    proc rising(clk) {
+        if enable | reset {
+            lhs = lhs_mux;
+            rhs = rhs_mux;
+            offset = instruction_decoder.imm_out;
+        }
+    }
+
+    reg alu_op: AluOp;
+    reg move_condition: Condition;
+    reg jump_condition: Condition;
+    reg load_flags: bit;
+    proc rising(clk) {
+        if enable | reset {
+            if stall_execute {
+                alu_op = AluOp::Nop;
+                move_condition = Condition::Never;
+                jump_condition = Condition::Never;
+                load_flags = 0 as bit;
+            } else {
+                alu_op = instruction_decoder.alu_op_out;
+                move_condition = instruction_decoder.move_condition_out;
+                jump_condition = instruction_decoder.jump_condition_out;
+                load_flags = instruction_decoder.load_flags_out;
+            }
+        }
+    }
+
+    reg mem_enable: bit;
+    reg mem_mode: MemoryMode;
+    reg mem_sign_ext: bit;
+    reg mem_write: bit;
+    proc rising(clk) {
+        if enable | reset {
+            if stall_execute {
+                mem_enable = 0 as bit;
+                mem_mode = MemoryMode::Bits32;
+                mem_sign_ext = 0 as bit;
+                mem_write = 0 as bit;
+            } else {
+                mem_enable = instruction_decoder.mem_enable_out;
+                mem_mode = instruction_decoder.mem_mode_out;
+                mem_sign_ext = instruction_decoder.mem_sign_ext_out;
+                mem_write = instruction_decoder.mem_write_out;
+            }
+        }
+    }
+
+    // ------------- Stage 3 (Execute) -------------
+    comb {
+        alu.lhs = lhs;
+        alu.rhs = rhs;
+        alu.flags_in = flag_register.flags_out;
+        alu.conditional = move_condition_unit.conditional;
+        alu.op = alu_op;
+
+        flag_register.flags_in = alu.flags_out;
+        flag_register.load = load_flags;
+
+        move_condition_unit.flags = flag_register.flags_out;
+        move_condition_unit.condition = move_condition;
+    }
+
+    sig mem_address: bits<32>;
+    comb {
+        mem_address = lhs + offset;
+    }
+
+    comb {
+        jump_condition_unit.flags = flag_register.flags_out;
+        jump_condition_unit.condition = jump_condition;
+
+        program_counter.data_in = mem_address;
+        program_counter.load = jump_condition_unit.conditional;
+    }
+
+    comb {
+        swizzle.unpacked_data_in = rhs;
+        swizzle.mode_in = mem_mode;
+        swizzle.byte_address_in = mem_address[0..2];
+        swizzle.sign_extend_in = mem_sign_ext;
+        swizzle.write_in = mem_write;
+
+        mem_address_out = mem_address[2..32];
+        mem_data_out = swizzle.packed_data_out;
+        mem_enable_out = mem_enable & !swizzle.io_enable_out;
+        mem_byte_enable_out = swizzle.byte_enable_out;
+        mem_write_out = mem_write;
+
+        io_address_out = mem_address[0..12];
+        io_data_out = swizzle.io_data_out;
+        io_enable_out = mem_enable & swizzle.io_enable_out;
+        io_write_out = mem_write;
+
+        k_flag_out = kernel_mode_register.k_flag_out;
+    }
+    // ---------------------------------------------
+
+    reg result: bits<32>;
+    proc rising(clk) {
+        if enable | reset {
+            result = alu.result;
+        }
+    }
+
+    // ------------- Stage 4 (Memory) -------------
+    
+    // --------------------------------------------
+
+    reg result_data: bits<32>;
+    reg mem_data: bits<32>;
+    reg io_data: bits<32>;
+    proc rising(clk) {
+        if enable | reset {
+            result_data = result;
+            mem_data = mem_data_in;
+            io_data = io_data_in;
+        }
+    }
+
+    reg data_bus_source_2: DataBusSource;
+    reg data_bus_source_3: DataBusSource;
+    reg data_bus_source_4: DataBusSource;
+    reg reg_load_select_2: bits<5>;
+    reg reg_load_select_3: bits<5>;
+    reg reg_load_select_4: bits<5>;
+    proc rising(clk) {
+        if enable | reset {
+            data_bus_source_2 = if stall_execute {
+                DataBusSource::Result
+            } else {
+                instruction_decoder.data_bus_source_out
+            };
+            data_bus_source_3 = data_bus_source_2;
+            data_bus_source_4 = data_bus_source_3;
+
+            reg_load_select_2 = if stall_execute {
+                0 as bits::<5>
+            } else {
+                instruction_decoder.reg_load_select_out
+            };
+            reg_load_select_3 = reg_load_select_2;
+            reg_load_select_4 = reg_load_select_3;
+        }
+    }
+    
+    // ------------- Stage 5 (Writeback) -------------
+    comb {
+        swizzle.packed_data_in = mem_data;
+        swizzle.io_data_in = io_data;
+    }
+
+    sig data_bus: bits<32>;
+    comb {
+        data_bus = match data_bus_source_4 {
+            DataBusSource::Result => result_data,
+            DataBusSource::Memory => swizzle.unpacked_data_out,
+        };
+    }
+
+    comb {
+        register_file.data_in = data_bus;
+        register_file.load_select = reg_load_select_4;
+    }
+    // -----------------------------------------------
+}

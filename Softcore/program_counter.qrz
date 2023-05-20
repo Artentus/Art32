@@ -1,0 +1,38 @@
+mod ProgramCounter<BITS> (
+    in sig data_in: bits<BITS>,
+    in sig inc: bit,
+    in sig load: bit,
+
+    out sig pc_next_out: bits<BITS>,
+    out sig pc_value_out: bits<BITS>,
+    
+    in sig enable: bit,
+    in sig reset: bit,
+    in sig clk: bit,
+) {
+    const ALIGN_BITS = clog2((BITS + 7) / 8);
+    const PC_BITS = BITS - ALIGN_BITS;
+
+    sig pc_next: bits<PC_BITS>;
+    comb {
+        pc_next = if reset {
+            0 as bits::<PC_BITS>;
+        } else if enable & load {
+            data_in[ALIGN_BITS..BITS];
+        } else if enable & inc {
+            pc_value + (1 as bits::<PC_BITS>);
+        } else {
+            pc_value
+        };
+    }
+
+    reg pc_value: bits<PC_BITS>;
+    proc rising(clk) {
+        pc_value = pc_next;
+    }
+
+    comb {
+        pc_next_out = pc_next @ (0 as bits::<ALIGN_BITS>);
+        pc_value_out = pc_value @ (0 as bits::<ALIGN_BITS>);
+    }
+}

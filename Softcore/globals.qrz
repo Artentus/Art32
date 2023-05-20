@@ -1,0 +1,163 @@
+fn flog2(n_bits) {
+    n_bits >>= 1;
+    let log = 0;
+    while n_bits != 0 {
+        n_bits >>= 1;
+        log += 1;
+    }
+    log
+}
+
+fn clog2(n_bits) {
+    n_bits -= 1;
+    let log = 0;
+    while n_bits != 0 {
+        n_bits >>= 1;
+        log += 1;
+    }
+    log
+}
+
+fn max(a, b) {
+    if a > b { a } else { b }
+}
+
+extern mod Pll (
+    in sig clk25: bit,
+
+    out sig clk200: bit,
+    out sig clk80: bit,
+    out sig clk40: bit,
+    out sig locked: bit,
+);
+
+extern mod Mult16 (
+    in sig SignA: bit,
+    in sig SignB: bit,
+    in sig A: bits<16>,
+    in sig B: bits<16>,
+    out sig P: bits<32>,
+);
+
+extern mod KernelRam (
+    in sig instr_addr_in: bits<13>,
+    out reg instr_out: bits<32>,
+
+    in sig data_addr_in: bits<13>,
+    in sig data_in: bits<32>,
+    out reg data_out: bits<32>,
+    in sig data_byte_enable: bits<4>,
+    in sig data_write: bit,
+
+    in sig clk: bit,
+);
+
+extern mod DDR (
+    in sig d_in: bits<2>,
+    out sig d_out: bit,
+
+    in sig reset: bit,
+    in sig clk: bit,
+);
+
+struct Flags {
+    carry   : bit,
+    zero    : bit,
+    sign    : bit,
+    overflow: bit,
+}
+
+enum AdderOp: bits<2> {
+    Add  = 0x0,
+    AddC = 0x1,
+    Sub  = 0x2,
+    SubB = 0x3,
+}
+
+enum MultOp: bits<2> {
+    MulUU = 0b00,
+    MulSS = 0b11,
+    MulUS = 0b01,
+}
+
+enum AluOp: bits<4> {
+    Add    = 0x0,
+    AddC   = 0x1,
+    Sub    = 0x2,
+    SubB   = 0x3,
+    And    = 0x4,
+    Or     = 0x5,
+    Xor    = 0x6,
+    Shl    = 0x7,
+    Lsr    = 0x8,
+    Asr    = 0x9,
+    Mul    = 0xA,
+    MulHuu = 0xB,
+    MulHss = 0xC,
+    MulHus = 0xD,
+    Cond   = 0xE,
+    Nop    = 0xF,
+}
+
+enum Condition: bits<4> {
+    Never              = 0x0, // false
+    Carry              = 0x1, // C
+    Zero               = 0x2, // Z
+    Signed             = 0x3, // S
+    Overflow           = 0x4, // O
+    NotCarry           = 0x5, // !C
+    NotZero            = 0x6, // !Z
+    NotSigned          = 0x7, // !S
+    NotOverflow        = 0x8, // !O
+    UnsignedLessEqual  = 0x9, // !C | Z;
+    UnsignedGreater    = 0xA, // C & !Z;
+    SignedLess         = 0xB, // S != O;
+    SignedGreaterEqual = 0xC, // S == O;
+    SignedLessEqual    = 0xD, // Z | (S != O);
+    SignedGreater      = 0xE, // !Z & (S == O);
+    Always             = 0xF, // true
+}
+
+enum OpCode: bits<4> {
+    System     = 0x0,
+    AluRegReg  = 0x1,
+    AluRegImm  = 0x2,
+    Load       = 0x3,
+    Store      = 0x4,
+    Branch     = 0x5,
+    MoveRegReg = 0x6,
+    MoveRegImm = 0x7,
+    Jump       = 0x8,
+    UI         = 0x9,
+    Nop        = 0xF,
+}
+
+enum LhsBusSource: bits<3> {
+    Register = 0b000,
+    Pc       = 0b001,
+    Syscall  = 0b010,
+    Forward3 = 0b100,
+    Forward4 = 0b101,
+    Forward5 = 0b110,
+}
+
+enum RhsBusSource: bits<3> {
+    Register  = 0b000,
+    Pc        = 0b001,
+    Immediate = 0b010,
+    Forward3  = 0b100,
+    Forward4  = 0b101,
+    Forward5  = 0b110,
+}
+
+enum DataBusSource: bit {
+    Result = 0b0,
+    Memory = 0b1,
+}
+
+enum MemoryMode: bits<2> {
+    Bits32 = 0b00,
+    Bits8  = 0b01,
+    Bits16 = 0b10,
+    IO     = 0b11,
+}

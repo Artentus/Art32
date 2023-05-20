@@ -1,0 +1,24 @@
+mod ImmediateDecoder (
+    in sig instruction_word: bits<32>,
+    in sig op_code: OpCode,
+
+    out sig imm: bits<32>,
+) {
+    sig imm_15: bits<15>;
+    sig imm_22: bits<22>;
+    sig uimm_20: bits<20>;
+    comb {
+        imm_15  = instruction_word[17..32];
+        imm_22  = instruction_word[31] @ instruction_word[12..19] @ instruction_word[19..31] @ (0 as bits::<2>);
+        uimm_20 = instruction_word[31] @ instruction_word[12..29] @ instruction_word[29..31];
+    }
+
+    comb {
+        imm = match op_code {
+            OpCode::System => 0 as bits::<32>,
+            OpCode::Branch => (imm_22 @ (0 as bits::<10>)) >>> 10,
+            OpCode::UI     => uimm_20 @ (0 as bits::<12>),
+            _              => (imm_15 @ (0 as bits::<17>)) >>> 17,
+        };
+    }
+}

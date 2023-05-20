@@ -1,0 +1,118 @@
+mod DataSwizzle (
+    // CPU port
+    in sig unpacked_data_in: bits<32>,
+    out sig unpacked_data_out: bits<32>,
+    in sig mode_in: MemoryMode,
+    in sig byte_address_in: bits<2>,
+    in sig sign_extend_in: bit,
+    in sig write_in: bit,
+
+    // Memory port
+    in sig packed_data_in: bits<32>,
+    out sig packed_data_out: bits<32>,
+    out sig byte_enable_out: bits<4>,
+
+    // IO port
+    in sig io_data_in: bits<32>,
+    out sig io_data_out: bits<32>,
+    out sig io_enable_out: bit,
+
+    in sig clk: bit,
+) {
+    comb {
+        byte_enable_out = if write_in {
+            match mode_in {
+                MemoryMode::Bits32 => 0b1111 as bits::<4>,
+                MemoryMode::Bits8 => {
+                    match byte_address_in {
+                        0b00 => 0b0001 as bits::<4>,
+                        0b01 => 0b0010 as bits::<4>,
+                        0b10 => 0b0100 as bits::<4>,
+                        0b11 => 0b1000 as bits::<4>,
+                    }
+                },
+                MemoryMode::Bits16 => {
+                    match byte_address_in[1] {
+                        0b0 => 0b0011 as bits::<4>,
+                        0b1 => 0b1100 as bits::<4>,
+                    }
+                },
+                MemoryMode::IO => 0b0000 as bits::<4>,
+            }
+        } else {
+            0b1111 as bits::<4>
+        };
+
+        io_enable_out = mode_in == MemoryMode::IO;
+    }
+
+    sig unpacked_data_in_8: bits<8>;
+    sig unpacked_data_in_16: bits<16>;
+    comb {
+        unpacked_data_in_8  = unpacked_data_in[0.. 8];
+        unpacked_data_in_16 = unpacked_data_in[0..16];
+    }
+
+    comb {
+        packed_data_out = match mode_in {
+            MemoryMode::Bits32 => unpacked_data_in,
+            MemoryMode::Bits8 => unpacked_data_in_8 @ unpacked_data_in_8 @ unpacked_data_in_8 @ unpacked_data_in_8,
+            MemoryMode::Bits16 => unpacked_data_in_16 @ unpacked_data_in_16,
+            MemoryMode::IO => unpacked_data_in,
+        };
+
+        io_data_out = unpacked_data_in;
+    }
+
+    reg mode_reg_0: MemoryMode;
+    reg mode_reg_1: MemoryMode;
+    reg byte_address_reg_0: bits<2>;
+    reg byte_address_reg_1: bits<2>;
+    reg sign_extend_reg_0: bit;
+    reg sign_extend_reg_1: bit;
+    proc rising(clk) {
+        mode_reg_0 = mode_in;
+        mode_reg_1 = mode_reg_0;
+        byte_address_reg_0 = byte_address_in;
+        byte_address_reg_1 = byte_address_reg_0;
+        sign_extend_reg_0 = sign_extend_in;
+        sign_extend_reg_1 = sign_extend_reg_0;
+    }
+
+    sig packed_data_in_8: bits<8>;
+    sig packed_data_in_16: bits<16>;
+    comb {
+        packed_data_in_8 = match byte_address_reg_1 {
+            0b00 => packed_data_in[ 0.. 8],
+            0b01 => packed_data_in[ 8..16],
+            0b10 => packed_data_in[16..24],
+            0b11 => packed_data_in[24..32],
+        };
+
+        packed_data_in_16 = match byte_address_reg_1[1] {
+            0b0 => packed_data_in[ 0..16],
+            0b1 => packed_data_in[16..32],
+        };
+    }
+
+    comb {
+        unpacked_data_out = match mode_reg_1 {
+            MemoryMode::Bits32 => packed_data_in,
+            MemoryMode::Bits8 => {
+                if sign_extend_reg_1 {
+                    (packed_data_in_8 @ (0 as bits::<24>)) >>> 24
+                } else {
+                    (0 as bits::<24>) @ packed_data_in_8
+                }
+            },
+            MemoryMode::Bits16 => {
+                if sign_extend_reg_1 {
+                    (packed_data_in_16 @ (0 as bits::<16>)) >>> 16
+                } else {
+                    (0 as bits::<16>) @ packed_data_in_16
+                }
+            },
+            MemoryMode::IO => io_data_in,
+        };
+    }
+}

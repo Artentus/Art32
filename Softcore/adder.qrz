@@ -1,0 +1,53 @@
+mod Adder<BITS> (
+    in sig lhs: bits<BITS>,
+    in sig rhs: bits<BITS>,
+    in sig carry_in: bit,
+    in sig op: AdderOp,
+
+    out sig result: bits<BITS>,
+    out sig carry_out: bit,
+    out sig sign: bit,
+    out sig overflow: bit,
+) {
+    sig rhs_inverted: bits<BITS>;
+    comb {
+        rhs_inverted = match op {
+            AdderOp::Add | AdderOp::AddC =>  rhs,
+            AdderOp::Sub | AdderOp::SubB => !rhs,
+        };
+    }
+
+    sig carry_in_override: bit;
+    comb {
+        carry_in_override = match op {
+            AdderOp::Add => 0 as bit,
+            AdderOp::Sub => 1 as bit,
+            AdderOp::AddC | AdderOp::SubB => carry_in,
+        };
+    }
+
+    sig lhs_sign: bit;
+    sig rhs_sign: bit;
+    comb {
+        lhs_sign = lhs[BITS - 1];
+        rhs_sign = rhs_inverted[BITS - 1];
+    }
+
+    sig lhs_full: bits<{BITS + 1}>;
+    sig rhs_full: bits<{BITS + 1}>;
+    sig carry_in_full: bits<{BITS + 1}>;
+    sig sum: bits<{BITS + 1}>;
+    comb {
+        lhs_full = (0 as bit)@lhs;
+        rhs_full = (0 as bit)@rhs_inverted;
+        carry_in_full = (0 as bits::<BITS>)@carry_in_override;
+        sum = lhs_full + rhs_full + carry_in_full;
+    }
+
+    comb {
+        result = sum[0..BITS];
+        carry_out = sum[BITS];
+        sign = sum[BITS - 1];
+        overflow = (lhs_sign == rhs_sign) & (lhs_sign != sign);
+    }
+}

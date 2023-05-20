@@ -1,0 +1,87 @@
+mod Mult32 (
+    in sig lhs: bits<32>,
+    in sig rhs: bits<32>,
+    out sig result: bits<64>,
+
+    in sig op: MultOp,
+) {
+    sig lhs_sign: bit;
+    sig rhs_sign: bit;
+    comb {
+        lhs_sign = match op {
+            MultOp::MulUU => 0 as bit,
+            MultOp::MulSS => 1 as bit,
+            MultOp::MulUS => 0 as bit,
+        };
+
+        rhs_sign = match op {
+            MultOp::MulUU => 0 as bit,
+            MultOp::MulSS => 1 as bit,
+            MultOp::MulUS => 1 as bit,
+        };
+    }
+
+    sig lhs_l: bits<16>;
+    sig lhs_h: bits<16>;
+    comb {
+        lhs_l = lhs[ 0..16];
+        lhs_h = lhs[16..32];
+    }
+
+    sig rhs_l: bits<16>;
+    sig rhs_h: bits<16>;
+    comb {
+        rhs_l = rhs[ 0..16];
+        rhs_h = rhs[16..32];
+    }
+
+    sig prod_ll: bits<32>;
+    let mult_ll: Mult16;
+    comb {
+        mult_ll.SignA = 0 as bit;
+        mult_ll.SignB = 0 as bit;
+        mult_ll.A = lhs_l;
+        mult_ll.B = rhs_l;
+
+        prod_ll = mult_ll.P;
+    }
+
+    sig prod_lh: bits<32>;
+    let mult_lh: Mult16;
+    comb {
+        mult_lh.SignA = 0 as bit;
+        mult_lh.SignB = rhs_sign;
+        mult_lh.A = lhs_l;
+        mult_lh.B = rhs_h;
+
+        prod_lh = mult_lh.P;
+    }
+
+    sig prod_hl: bits<32>;
+    let mult_hl: Mult16;
+    comb {
+        mult_hl.SignA = lhs_sign;
+        mult_hl.SignB = 0 as bit;
+        mult_hl.A = lhs_h;
+        mult_hl.B = rhs_l;
+
+        prod_hl = mult_hl.P;
+    }
+
+    sig prod_hh: bits<32>;
+    let mult_hh: Mult16;
+    comb {
+        mult_hh.SignA = lhs_sign;
+        mult_hh.SignB = rhs_sign;
+        mult_hh.A = lhs_h;
+        mult_hh.B = rhs_h;
+
+        prod_hh = mult_hh.P;
+    }
+
+    comb {
+        result = (prod_hh @ prod_ll)
+            + ((prod_lh @ (0 as bits::<32>)) >>> 16)
+            + ((prod_hl @ (0 as bits::<32>)) >>> 16);
+    }
+}

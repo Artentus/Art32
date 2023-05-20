@@ -1,0 +1,84 @@
+extern mod Uart (
+    in sig data_in: bits<8>,
+    in sig transmit: bit,
+    out sig fetch: bit,
+
+    out sig data_out: bits<8>,
+    out sig received: bit,
+
+    in sig rxd: bit,
+    out sig txd: bit,
+
+    in sig reset: bit,
+    in sig clk: bit,
+);
+
+mod SerialController (
+    in sig addr_in: bits<2>,
+    in sig data_in: bits<8>,
+    out sig data_out: bits<8>,
+    in sig write: bit,
+
+    in sig rxd: bit,
+    out sig txd: bit,
+
+    in sig enable: bit,
+    in sig reset: bit,
+    in sig clk: bit,
+) {
+    let uart: Uart;
+    comb {
+        uart.rxd = rxd;
+        txd = uart.txd;
+
+        uart.reset = reset;
+        uart.clk = clk;
+    }
+
+    let rx_fifo: Fifo<8, 6>;
+    comb {
+        rx_fifo.data_in = uart.data_out;
+        rx_fifo.write = uart.received;
+
+        rx_fifo.reset = reset;
+        rx_fifo.clk = clk;
+    }
+
+    let tx_fifo: Fifo<8, 6>;
+    comb {
+        uart.data_in = tx_fifo.data_out;
+        uart.transmit = !tx_fifo.empty;
+        tx_fifo.read = uart.fetch;
+
+        tx_fifo.reset = reset;
+        tx_fifo.clk = clk;
+    }
+
+    reg addr_reg: bits<2>;
+    reg data_reg: bits<8>;
+    reg write_reg: bit;
+    reg enable_reg: bit;
+    proc rising(clk) {
+        addr_reg = addr_in;
+        data_reg = data_in;
+        write_reg = write;
+        enable_reg = enable;
+    }
+
+    // 0b00 -> read data
+    // 0b01 -> write data
+    // 0b10 -> read rx count
+    // 0b11 -> read tx count
+    comb {
+        data_out = match addr_reg {
+            0b00 => rx_fifo.data_out,
+            0b01 => 0 as bits::<8>,
+            0b10 => rx_fifo.count as bits::<8>,
+            0b11 => tx_fifo.count as bits::<8>,
+        };
+        tx_fifo.data_in = data_reg;
+
+        rx_fifo.read = enable_reg & !write_reg & (addr_reg == 0b00);
+        tx_fifo.write = enable_reg & write_reg & (addr_reg == 0b01);
+    }
+}
