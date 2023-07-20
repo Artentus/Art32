@@ -1,0 +1,10 @@
+[package]
+name = "sim"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+gsim = { git = "https://github.com/Artentus/gsim.git", features = ["yosys-import"] }
+
+[build-dependencies]
+glob = "0.3.1"
