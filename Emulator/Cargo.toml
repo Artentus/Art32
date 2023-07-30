@@ -1,0 +1,15 @@
+[package]
+name = "art32-emu"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+num_enum = "0.6.1"
+strum = { version = "0.25.0", features = ["derive"] }
+bitflags = "2.3.3"
+bytemuck = "1.13.1"
+static_assertions = "1.1.0"
+
+[dev-dependencies]
+proptest = "1.2.0"
+test-strategy = "0.3.1"
