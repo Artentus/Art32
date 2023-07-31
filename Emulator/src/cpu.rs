@@ -3,7 +3,7 @@ use register::*;
 
 pub mod interface;
 use interface::*;
-use strum::EnumCount;
+use strum::{EnumCount, IntoEnumIterator};
 
 #[cfg(test)]
 mod tests;
@@ -97,6 +97,38 @@ impl Cpu {
     pub fn signal_interrupt(&mut self, slot: usize) {
         debug_assert!(slot < HARD_INT_SLOTS);
         self.pending_interrupts |= 1 << slot;
+    }
+
+    pub fn draw_debug_info(
+        &self,
+        wgpu_state: &crate::display::WgpuState,
+        render_target: &wgpu::TextureView,
+        encoder: &mut wgpu::CommandEncoder,
+        text_renderer: &mut crate::display::TextRenderer,
+    ) {
+        let pc_text = format!("pc: 0x{:0>8X}", self.program_counter);
+        text_renderer.draw_text(
+            wgpu_state,
+            render_target,
+            encoder,
+            &pc_text,
+            crate::display::Vec2f::new(10.0, 8.0),
+            16.0,
+            [255; 4],
+        );
+
+        for (i, reg) in Register::iter().skip(1).enumerate() {
+            let reg_text = format!("{reg}: 0x{:0>8X}", self.get_reg(reg));
+            text_renderer.draw_text(
+                wgpu_state,
+                render_target,
+                encoder,
+                &reg_text,
+                crate::display::Vec2f::new(10.0, 34.0 + 18.0 * (i as f32)),
+                16.0,
+                [255; 4],
+            );
+        }
     }
 
     #[inline]

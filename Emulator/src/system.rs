@@ -219,6 +219,17 @@ impl Art32 {
         self.reservation.reset();
     }
 
+    pub fn draw_debug_info(
+        &self,
+        wgpu_state: &crate::display::WgpuState,
+        render_target: &wgpu::TextureView,
+        encoder: &mut wgpu::CommandEncoder,
+        text_renderer: &mut crate::display::TextRenderer,
+    ) {
+        self.cpu
+            .draw_debug_info(wgpu_state, render_target, encoder, text_renderer);
+    }
+
     pub fn step(&mut self) {
         let mut mmu = Mmu {
             kernel_ram: &mut self.kernel_ram,

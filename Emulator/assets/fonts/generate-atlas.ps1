@@ -1,0 +1,1 @@
+.\msdf-atlas-gen.exe -font .\FiraCode\FiraCode-Regular.ttf -type msdf -format png -pots -scanline -minsize 64 -emrange 0.2 -yorigin top -imageout .\FiraCode\FiraCode-Regular.png -json .\FiraCode\FiraCode-Regular.json
