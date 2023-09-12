@@ -1,0 +1,22 @@
+[package]
+name = "art32-emu"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+num_enum = "0.6.1"
+strum = { version = "0.25.0", features = ["derive"] }
+bitflags = "2.3.3"
+bytemuck = { version = "1.13.1", features = ["derive"] }
+static_assertions = "1.1.0"
+winit = "0.28.6"
+wgpu = "0.17.0"
+pollster = "0.3.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+ahash = "0.8.3"
+image = "0.24.6"
+
+[dev-dependencies]
+proptest = "1.2.0"
+test-strategy = "0.3.1"

@@ -20,7 +20,9 @@ fn main() {
     let mut yosys_input_files = String::new();
     for verilog_file in verilog_files {
         yosys_input_files.push(' ');
+        yosys_input_files.push('"');
         yosys_input_files.push_str(verilog_file.as_os_str().to_str().unwrap());
+        yosys_input_files.push('"');
     }
 
     for test_file in glob("./tests/*.qrz").unwrap().map(Result::unwrap) {
@@ -34,7 +36,12 @@ fn main() {
         json_file.push_str(test_file.file_stem().unwrap().to_str().unwrap());
         json_file.push_str(".json");
 
-        let quartz_output = Command::new("./quartz")
+        #[cfg(target_os = "linux")]
+        let mut quartz_cmd = Command::new("./quartz");
+        #[cfg(target_os = "windows")]
+        let mut quartz_cmd = Command::new("./quartz.exe");
+
+        let quartz_output = quartz_cmd
             .arg("-o")
             .arg(&sv_file)
             .arg(test_file.to_str().unwrap())
@@ -46,7 +53,7 @@ fn main() {
             panic!("{}", std::str::from_utf8(&quartz_output.stderr).unwrap());
         }
 
-        let yosys_commands = format!("read_verilog -sv {sv_file}; read_verilog {yosys_input_files}; synth -top Top -flatten -noalumacc -nordff -run begin:fine; hierarchy -check; check; write_json {json_file}");
+        let yosys_commands = format!("read_verilog -sv \"{sv_file}\"; read_verilog {yosys_input_files}; synth -top Top -flatten -noalumacc -nordff -run begin:fine; hierarchy -check; check; write_json \"{json_file}\"");
         let yosys_output = Command::new(&yosys_path)
             .arg("-p")
             .arg(yosys_commands)
