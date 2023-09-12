@@ -46,7 +46,7 @@ fn main() {
             panic!("{}", std::str::from_utf8(&quartz_output.stderr).unwrap());
         }
 
-        let yosys_commands = format!("read_verilog -sv {sv_file}; read_verilog {yosys_input_files}; synth -top Top -flatten -noalumacc -run begin:fine; hierarchy -check; check; write_json {json_file}");
+        let yosys_commands = format!("read_verilog -sv {sv_file}; read_verilog {yosys_input_files}; synth -top Top -flatten -noalumacc -nordff -run begin:fine; hierarchy -check; check; write_json {json_file}");
         let yosys_output = Command::new(&yosys_path)
             .arg("-p")
             .arg(yosys_commands)
