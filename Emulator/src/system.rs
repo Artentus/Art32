@@ -181,17 +181,28 @@ impl MemoryInterface for Mmu<'_> {
     }
 }
 
+const TIMER_LOW_ADDR: u32 = 0x080;
+const TIMER_HIGH_ADDR: u32 = 0x081;
+const TIMER_ACCURACY_ADDR: u32 = 0x082;
+
 pub struct IoBus<'a> {
     start_time: &'a std::time::Instant,
 }
 
 impl IoInterface for IoBus<'_> {
     fn read(&self, addr: u32, priv_level: PrivilegeLevel) -> Result<u32, ()> {
-        Err(())
+        match addr {
+            TIMER_LOW_ADDR => Ok(self.start_time.elapsed().as_nanos() as u32),
+            TIMER_HIGH_ADDR => Ok((self.start_time.elapsed().as_nanos() >> 32) as u32),
+            TIMER_ACCURACY_ADDR => Ok(1),
+            _ => Err(()),
+        }
     }
 
     fn write(&mut self, addr: u32, value: u32, priv_level: PrivilegeLevel) -> Result<(), ()> {
-        Err(())
+        match addr {
+            _ => Err(()),
+        }
     }
 }
 
