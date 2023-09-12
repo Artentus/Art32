@@ -932,7 +932,6 @@ impl Cpu {
                                             0b100 /* divu */ => {
                                                 let result = if rhs == 0 { u32::MAX } else { u32::wrapping_div(lhs, rhs) };
                                                 self.set_reg(rd, result);
-                                                self.state.flags.set(Flags::ZERO, result == 0);
                                             }
                                             0b101 /* divs */ => {
                                                 let result = if rhs == 0 {
@@ -941,17 +940,14 @@ impl Cpu {
                                                     i32::wrapping_div(lhs as i32, rhs as i32)
                                                 } as u32;
                                                 self.set_reg(rd, result);
-                                                self.state.flags.set(Flags::ZERO, result == 0);
                                             }
                                             0b110 /* remu */ => {
                                                 let result = if rhs == 0 { 0 } else { u32::wrapping_rem(lhs, rhs) };
                                                 self.set_reg(rd, result);
-                                                self.state.flags.set(Flags::ZERO, result == 0);
                                             }
                                             0b111 /* rems */ => {
                                                 let result = if rhs == 0 { 0 } else { i32::wrapping_rem(lhs as i32, rhs as i32) as u32 };
                                                 self.set_reg(rd, result);
-                                                self.state.flags.set(Flags::ZERO, result == 0);
                                             }
                                             _ => unreachable!(),
                                         }
