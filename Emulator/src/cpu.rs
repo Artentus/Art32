@@ -377,10 +377,11 @@ impl Cpu {
             self.program_counter = jump_addr;
         } else if (instruction & 0x4) == 0 {
             if (instruction & 0x80) == 0 {
-                // br, jr
+                // br, jr, jrl
 
                 let cond =
-                    Condition::try_from(shuffle_bits!(instruction { [14:12] => [2:0] })).unwrap();
+                    BranchCondition::try_from(shuffle_bits!(instruction { [14:12] => [2:0] }))
+                        .unwrap();
 
                 let imm = shuffle_bits!(instruction {
                     [15] => [5],
@@ -389,7 +390,11 @@ impl Cpu {
                     sign [3] => [9],
                 });
 
-                if self.state.flags.satisfy(cond) {
+                if cond == BranchCondition::Link {
+                    self.set_reg(Register::Ra, self.program_counter);
+                }
+
+                if self.state.flags.satisfy_branch(cond) {
                     self.program_counter = self.program_counter.wrapping_add(imm) & !0x1;
                 }
             } else {
@@ -634,9 +639,9 @@ impl Cpu {
                                     self.set_reg(rd, self.program_counter);
                                     self.program_counter = jump_addr;
                                 } else {
-                                    // br, jr
+                                    // br, jr, jrl
 
-                                    let cond = Condition::try_from(
+                                    let cond = BranchCondition::try_from(
                                         shuffle_bits!(instruction { [14:12] => [2:0] }),
                                     )
                                     .unwrap();
@@ -650,7 +655,11 @@ impl Cpu {
                                         [7] => [9],
                                     });
 
-                                    if self.state.flags.satisfy(cond) {
+                                    if cond == BranchCondition::Link {
+                                        self.set_reg(Register::Ra, self.program_counter);
+                                    }
+
+                                    if self.state.flags.satisfy_branch(cond) {
                                         self.program_counter =
                                             self.program_counter.wrapping_add(imm) & !0x1;
                                     }
