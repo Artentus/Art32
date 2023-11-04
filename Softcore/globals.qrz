@@ -71,7 +71,7 @@ enum AdderOp: bits<2> {
     Add  = 0x0,
     AddC = 0x1,
     Sub  = 0x2,
-    SubB = 0x3,
+    SubC = 0x3,
 }
 
 enum MultOp: bits<2> {
@@ -80,56 +80,77 @@ enum MultOp: bits<2> {
     MulUS = 0b01,
 }
 
-enum AluOp: bits<4> {
-    Add    = 0x0,
-    AddC   = 0x1,
-    Sub    = 0x2,
-    SubB   = 0x3,
-    And    = 0x4,
-    Or     = 0x5,
-    Xor    = 0x6,
-    Shl    = 0x7,
-    Lsr    = 0x8,
-    Asr    = 0x9,
-    Mul    = 0xA,
-    MulHuu = 0xB,
-    MulHss = 0xC,
-    MulHus = 0xD,
-    Cond   = 0xE,
-    Nop    = 0xF,
+enum AluOp: bits<5> {
+    Add = 0x00,
+    Sub = 0x01,
+    And = 0x02,
+    Or  = 0x03,
+    Xor = 0x04,
+    Shl = 0x05,
+    Lsr = 0x06,
+    Asr = 0x07,
+
+    AddC = 0x08,
+    SubC = 0x09,
+
+    Cond = 0x0F,
+
+    Mul    = 0x10,
+    MulHuu = 0x11,
+    MulHss = 0x12,
+    MulHus = 0x13,
+    Divu   = 0x14,
+    Divs   = 0x15,
+    Remu   = 0x16,
+    Rems   = 0x17,
+
+    Nop = 0x1F,
 }
 
-enum Condition: bits<4> {
-    Never              = 0x0, // false
-    Carry              = 0x1, // C
-    Zero               = 0x2, // Z
-    Signed             = 0x3, // S
-    Overflow           = 0x4, // O
-    NotCarry           = 0x5, // !C
-    NotZero            = 0x6, // !Z
-    NotSigned          = 0x7, // !S
-    NotOverflow        = 0x8, // !O
-    UnsignedLessEqual  = 0x9, // !C | Z;
-    UnsignedGreater    = 0xA, // C & !Z;
-    SignedLess         = 0xB, // S != O;
-    SignedGreaterEqual = 0xC, // S == O;
-    SignedLessEqual    = 0xD, // Z | (S != O);
-    SignedGreater      = 0xE, // !Z & (S == O);
-    Always             = 0xF, // true
+enum Condition: bits<3> {
+    Equal                  = 0x0, // Z
+    NotEqual               = 0x1, // !Z
+    UnsignedLessThan       = 0x2, // !C
+    UnsignedGreaterOrEqual = 0x3, // C
+    SignedLessThan         = 0x4, // S != O
+    SignedGreaterOrEqual   = 0x5, // S == O
+    Always                 = 0x6, // true
+    Never                  = 0x7, // false
 }
 
-enum OpCode: bits<4> {
-    System     = 0x0,
-    AluRegReg  = 0x1,
-    AluRegImm  = 0x2,
-    Load       = 0x3,
-    Store      = 0x4,
-    Branch     = 0x5,
-    MoveRegReg = 0x6,
-    MoveRegImm = 0x7,
-    Jump       = 0x8,
-    UI         = 0x9,
-    Nop        = 0xF,
+enum OpCode16: bits<3> {
+    Misc        = 0x0,
+    Jump        = 0x1,
+    LoadImm     = 0x2,
+    AddImm      = 0x3,
+    LoadStoreSp = 0x4,
+    SpecialSp   = 0x5,
+    Branch      = 0x6,
+    Inst32      = 0x7,
+}
+
+enum OpCode32: bits<5> {
+    AluRegReg  = 0x00,
+    AluRegImm  = 0x01,
+    MoveRegReg = 0x02,
+    MoveRegImm = 0x03,
+    CarryExt   = 0x04,
+    Jump       = 0x05,
+    Load       = 0x06,
+    Store      = 0x07,
+    MulExt     = 0x08,
+    Nop        = 0x1F,
+}
+
+enum MiscCode: bits<3> {
+    Nop       = 0x0,
+    Return    = 0x1,
+    IntReturn = 0x2,
+    Syscall   = 0x3,
+    Move      = 0x4,
+    Compare   = 0x5,
+    Alu       = 0x6,
+    ShiftImm  = 0x7,
 }
 
 enum LhsBusSource: bits<3> {

@@ -20,20 +20,25 @@ mod Cpu (
     out sig stall_out: bit,
     in sig syscall_addr_in: bits<30>,
 
-    in sig enable: bit,
-    in sig reset: bit,
+    in sig enable: bool,
+    in sig reset: bool,
     in sig clk: bit,
 ) {
+    let ir: InstructionRegister;
     let alu: Alu<32>;
     let move_condition_unit: ConditionUnit;
     let jump_condition_unit: ConditionUnit;
     let flag_register: FlagRegister;
     let kernel_mode_register: KernelModeRegister;
-    let program_counter: ProgramCounter<32>;
+    let program_counter: ProgramCounter<31>;
     let register_file: RegisterFile<32, 32>;
     let instruction_decoder: InstructionDecoder;
     let swizzle: DataSwizzle;
     comb {
+        ir.enable = enable;
+        ir.reset = reset;
+        ir.clk = clk;
+
         flag_register.enable = enable;
         flag_register.clk = clk;
 
@@ -133,33 +138,29 @@ mod Cpu (
 
     // ------------- Stage 1 (Fetch) -------------
     comb {
-        instruction_address_out = program_counter.pc_next_out;
+        program_counter.inc = if inc_pc {
+            if ir.instruction_16 { 1 } else { 2 }
+        } else {
+            0
+        };
+    }
+
+    comb {
+        instruction_address_out = (program_counter.pc_next + 1)[1..31] @ (0 as bits::<2>);
         fetch_request = !reset & !stall_execute & !stall_fetch;
 
-        program_counter.inc = inc_pc;
+        ir.word_in = instruction_word_in;
+        ir.address_odd = program_counter.pc_next[0];
+        ir.stall_execute = stall_execute;
+        ir.stall_fetch = stall_fetch;
     }
     // -------------------------------------------
-
-    reg ir: bits<32>;
-    proc rising(clk) {
-        if enable | reset {
-            ir = if reset {
-                0 as bits::<32>
-            } else if stall_execute {
-                ir
-            } else if stall_fetch {
-                0 as bits::<32>
-            } else {
-                instruction_word_in
-            };
-        }
-    }
 
     // ------------- Stage 2 (Decode) -------------
     sig lhs_mux: bits<32>;
     sig rhs_mux: bits<32>;
     comb {
-        instruction_decoder.instruction_word = ir;
+        instruction_decoder.instruction = ir.instruction;
 
         register_file.lhs_select = instruction_decoder.reg_lhs_select_out;
         register_file.rhs_select = instruction_decoder.reg_rhs_select_out;
@@ -169,7 +170,7 @@ mod Cpu (
 
         lhs_mux = match lhs_bus_source {
             LhsBusSource::Register => register_file.lhs_out,
-            LhsBusSource::Pc       => program_counter.pc_value_out,
+            LhsBusSource::Pc       => program_counter.pc_value @ (0 as bit),
             LhsBusSource::Syscall  => syscall_addr_in @ (0 as bits::<2>),
             LhsBusSource::Forward3 => alu.result,
             LhsBusSource::Forward4 => result,
@@ -178,7 +179,7 @@ mod Cpu (
 
         rhs_mux = match rhs_bus_source {
             RhsBusSource::Register  => register_file.rhs_out,
-            RhsBusSource::Pc        => program_counter.pc_value_out,
+            RhsBusSource::Pc        => program_counter.pc_value @ (0 as bit),
             RhsBusSource::Immediate => instruction_decoder.imm_out,
             RhsBusSource::Forward3  => alu.result,
             RhsBusSource::Forward4  => result,
@@ -262,7 +263,7 @@ mod Cpu (
         jump_condition_unit.flags = flag_register.flags_out;
         jump_condition_unit.condition = jump_condition;
 
-        program_counter.data_in = mem_address;
+        program_counter.data_in = mem_address[1..32];
         program_counter.load = jump_condition_unit.conditional;
     }
 
