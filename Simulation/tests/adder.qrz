@@ -1,0 +1,30 @@
+top mod Top {
+    let lhs: InPort<8>;
+    let rhs: InPort<8>;
+    let carry_in: InPort<1>;
+    let op: InPort<2>;
+
+    let result: OutPort<8>;
+    let carry_out: OutPort<1>;
+    let sign: OutPort<1>;
+    let overflow: OutPort<1>;
+
+    let adder: Adder<8>;
+
+    comb {
+        adder.lhs = lhs.d_in;
+        adder.rhs = rhs.d_in;
+        adder.carry_in = carry_in.d_in;
+        adder.op = match op.d_in {
+            0 => AdderOp::Add,
+            1 => AdderOp::AddC,
+            2 => AdderOp::Sub,
+            3 => AdderOp::SubC,
+        };
+
+        result.d_out = adder.result;
+        carry_out.d_out = adder.carry_out;
+        sign.d_out = adder.sign;
+        overflow.d_out = adder.overflow;
+    }
+}

@@ -13,7 +13,7 @@ mod Adder<BITS> (
     comb {
         rhs_inverted = match op {
             AdderOp::Add | AdderOp::AddC =>  rhs,
-            AdderOp::Sub | AdderOp::SubB => !rhs,
+            AdderOp::Sub | AdderOp::SubC => !rhs,
         };
     }
 
@@ -22,7 +22,7 @@ mod Adder<BITS> (
         carry_in_override = match op {
             AdderOp::Add => 0 as bit,
             AdderOp::Sub => 1 as bit,
-            AdderOp::AddC | AdderOp::SubB => carry_in,
+            AdderOp::AddC | AdderOp::SubC => carry_in,
         };
     }
 
