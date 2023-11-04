@@ -129,6 +129,37 @@ impl From<Condition> for u32 {
     }
 }
 
+#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, IntoPrimitive, TryFromPrimitive, EnumIter)]
+#[repr(u8)]
+#[strum(serialize_all = "lowercase")]
+pub(super) enum BranchCondition {
+    Eq,
+    Ne,
+    Lt,
+    Ge,
+    Lts,
+    Ges,
+    True,
+    Link,
+}
+
+impl TryFrom<u32> for BranchCondition {
+    type Error = ();
+
+    #[inline]
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        let value = u8::try_from(value).map_err(|_| ())?;
+        Self::try_from(value).map_err(|_| ())
+    }
+}
+
+impl From<BranchCondition> for u32 {
+    fn from(value: BranchCondition) -> Self {
+        let value: u8 = value.into();
+        value as u32
+    }
+}
+
 bitflags! {
     #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
     #[repr(transparent)]
@@ -175,6 +206,19 @@ impl Flags {
             Condition::Ges => self.contains(Self::SIGN) == self.contains(Self::OVERFLOW),
             Condition::True => true,
             Condition::False => false,
+        }
+    }
+
+    pub(super) fn satisfy_branch(self, condition: BranchCondition) -> bool {
+        match condition {
+            BranchCondition::Eq => self.contains(Self::ZERO),
+            BranchCondition::Ne => !self.contains(Self::ZERO),
+            BranchCondition::Lt => !self.contains(Self::CARRY),
+            BranchCondition::Ge => self.contains(Self::CARRY),
+            BranchCondition::Lts => self.contains(Self::SIGN) != self.contains(Self::OVERFLOW),
+            BranchCondition::Ges => self.contains(Self::SIGN) == self.contains(Self::OVERFLOW),
+            BranchCondition::True => true,
+            BranchCondition::Link => true,
         }
     }
 }
