@@ -1,5 +1,5 @@
-use super::super::{Condition, Cpu, Flags, Register};
-use super::{cond, cpu, reg16, reg32, TestIo, TestMemory};
+use super::super::{BranchCondition, Condition, Cpu, Flags, Register};
+use super::{br_cond, cond, cpu, reg16, reg32, TestIo, TestMemory};
 use crate::{shuffle_bits, Ashr};
 use proptest::prelude::*;
 use test_strategy::proptest;
@@ -150,7 +150,7 @@ fn jl_16(
 #[proptest]
 fn br_16(
     #[strategy(cpu())] mut cpu: Cpu,
-    #[strategy(cond())] condition: Condition,
+    #[strategy(br_cond())] condition: BranchCondition,
     #[strategy(-512..=511)]
     #[filter(align2)]
     offset: i32,
@@ -158,9 +158,12 @@ fn br_16(
     let offset = offset as u32;
 
     let mut expected_program_counter = cpu.program_counter.wrapping_add(2);
-    let expected_regs = cpu.state.regs.clone();
+    let mut expected_regs = cpu.state.regs.clone();
     let expected_flags = cpu.state.flags;
-    if expected_flags.satisfy(condition) {
+    if condition == BranchCondition::Link {
+        expected_regs.set(Register::Ra, expected_program_counter);
+    }
+    if expected_flags.satisfy_branch(condition) {
         expected_program_counter = expected_program_counter.wrapping_add(offset);
     }
 
@@ -632,7 +635,7 @@ fn jl_32(
 #[proptest]
 fn br_32(
     #[strategy(cpu())] mut cpu: Cpu,
-    #[strategy(cond())] condition: Condition,
+    #[strategy(br_cond())] condition: BranchCondition,
     #[strategy(-1_048_576..=1_048_575)]
     #[filter(align2)]
     offset: i32,
@@ -640,9 +643,12 @@ fn br_32(
     let offset = offset as u32;
 
     let mut expected_program_counter = cpu.program_counter.wrapping_add(4);
-    let expected_regs = cpu.state.regs.clone();
+    let mut expected_regs = cpu.state.regs.clone();
     let expected_flags = cpu.state.flags;
-    if expected_flags.satisfy(condition) {
+    if condition == BranchCondition::Link {
+        expected_regs.set(Register::Ra, expected_program_counter);
+    }
+    if expected_flags.satisfy_branch(condition) {
         expected_program_counter = expected_program_counter.wrapping_add(offset);
     }
 
@@ -1433,14 +1439,13 @@ fn divu_32(
 ) {
     let expected_program_counter = cpu.program_counter.wrapping_add(4);
     let mut expected_regs = cpu.state.regs.clone();
-    let mut expected_flags = cpu.state.flags;
+    let expected_flags = cpu.state.flags;
     let result = if expected_regs.get(rhs) == 0 {
         u32::MAX
     } else {
         u32::wrapping_div(expected_regs.get(lhs), expected_regs.get(rhs))
     };
     expected_regs.set(target, result);
-    expected_flags.set(Flags::ZERO, result == 0);
 
     let rhs_bits = u32::from(rhs);
     let mut mem = [(u32::from(lhs) << 17)
@@ -1466,7 +1471,7 @@ fn divs_32(
 ) {
     let expected_program_counter = cpu.program_counter.wrapping_add(4);
     let mut expected_regs = cpu.state.regs.clone();
-    let mut expected_flags = cpu.state.flags;
+    let expected_flags = cpu.state.flags;
     let result = if expected_regs.get(rhs) == 0 {
         if (expected_regs.get(lhs) as i32) < 0 {
             i32::MIN
@@ -1477,7 +1482,6 @@ fn divs_32(
         i32::wrapping_div(expected_regs.get(lhs) as i32, expected_regs.get(rhs) as i32)
     } as u32;
     expected_regs.set(target, result);
-    expected_flags.set(Flags::ZERO, result == 0);
 
     let rhs_bits = u32::from(rhs);
     let mut mem = [(u32::from(lhs) << 17)
@@ -1503,14 +1507,13 @@ fn remu_32(
 ) {
     let expected_program_counter = cpu.program_counter.wrapping_add(4);
     let mut expected_regs = cpu.state.regs.clone();
-    let mut expected_flags = cpu.state.flags;
+    let expected_flags = cpu.state.flags;
     let result = if expected_regs.get(rhs) == 0 {
         0
     } else {
         u32::wrapping_rem(expected_regs.get(lhs), expected_regs.get(rhs))
     };
     expected_regs.set(target, result);
-    expected_flags.set(Flags::ZERO, result == 0);
 
     let rhs_bits = u32::from(rhs);
     let mut mem = [(u32::from(lhs) << 17)
@@ -1536,14 +1539,13 @@ fn rems_32(
 ) {
     let expected_program_counter = cpu.program_counter.wrapping_add(4);
     let mut expected_regs = cpu.state.regs.clone();
-    let mut expected_flags = cpu.state.flags;
+    let expected_flags = cpu.state.flags;
     let result = if expected_regs.get(rhs) == 0 {
         0
     } else {
         i32::wrapping_rem(expected_regs.get(lhs) as i32, expected_regs.get(rhs) as i32) as u32
     };
     expected_regs.set(target, result);
-    expected_flags.set(Flags::ZERO, result == 0);
 
     let rhs_bits = u32::from(rhs);
     let mut mem = [(u32::from(lhs) << 17)

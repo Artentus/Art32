@@ -1,7 +1,7 @@
 mod instruction;
 
 use super::interface::*;
-use super::{Condition, Cpu, Flags, Register, RESET_PROGRAM_COUNTER};
+use super::{BranchCondition, Condition, Cpu, Flags, Register, RESET_PROGRAM_COUNTER};
 use bytemuck::{cast_slice, cast_slice_mut};
 use proptest::prelude::*;
 use strum::IntoEnumIterator;
@@ -32,6 +32,10 @@ fn reg16() -> impl Strategy<Value = Register> {
 
 fn cond() -> impl Strategy<Value = Condition> {
     any::<proptest::sample::Selector>().prop_map(|sel| sel.select(Condition::iter()))
+}
+
+fn br_cond() -> impl Strategy<Value = BranchCondition> {
+    any::<proptest::sample::Selector>().prop_map(|sel| sel.select(BranchCondition::iter()))
 }
 
 struct TestMemory<'a> {

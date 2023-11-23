@@ -605,7 +605,8 @@ impl Cpu {
                             self.access_violation();
                         }
                     } else {
-                        let Ok(upper_inst) = mem.read_16(self.program_counter, priv_level, false) else {
+                        let Ok(upper_inst) = mem.read_16(self.program_counter, priv_level, false)
+                        else {
                             self.access_violation();
                             return None;
                         };
