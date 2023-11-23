@@ -69,6 +69,7 @@ fn main() {
     use std::sync::{Arc, Mutex};
     use std::thread;
     use std::time::Duration;
+    use system::EnvAction;
     use winit::dpi::PhysicalSize;
     use winit::event::{ElementState, Event, ModifiersState, VirtualKeyCode, WindowEvent};
     use winit::event_loop::EventLoop;
@@ -109,16 +110,29 @@ fn main() {
         let art32 = art32_clone;
 
         const INNER_ITER_COUNT: u32 = 10000;
-        loop {
+        'outer: loop {
             if exit.load(atomic::Ordering::Acquire) {
-                break;
+                break 'outer;
             }
 
             if run.load(atomic::Ordering::Acquire) {
                 let mut art32 = art32.lock().unwrap();
 
-                for _ in 0..INNER_ITER_COUNT {
-                    art32.step();
+                'inner: for _ in 0..INNER_ITER_COUNT {
+                    match art32.step() {
+                        Some(EnvAction::Break) => {
+                            run.store(false, atomic::Ordering::Release);
+                            break 'inner;
+                        }
+                        Some(EnvAction::Reset) => {
+                            println!("system reset requested");
+                            art32.reset();
+                        }
+                        Some(EnvAction::Error) => {
+                            panic!("system caused an error");
+                        }
+                        None => (),
+                    }
                 }
             } else {
                 thread::sleep(Duration::from_millis(1));
@@ -179,7 +193,19 @@ fn main() {
                         Some(VirtualKeyCode::C) => {
                             if !run.load(atomic::Ordering::Acquire) {
                                 let mut art32 = art32.lock().unwrap();
-                                art32.step();
+                                match art32.step() {
+                                    Some(EnvAction::Break) => {
+                                        // already in single step mode
+                                    }
+                                    Some(EnvAction::Reset) => {
+                                        println!("system reset requested");
+                                        art32.reset();
+                                    }
+                                    Some(EnvAction::Error) => {
+                                        panic!("system caused an error");
+                                    }
+                                    None => (),
+                                }
                             }
                         }
                         _ => (),

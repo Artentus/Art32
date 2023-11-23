@@ -206,6 +206,24 @@ impl IoInterface for IoBus<'_> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnvAction {
+    Break,
+    Reset,
+    Error,
+}
+
+impl EnvAction {
+    const fn new(code: u8) -> Option<Self> {
+        match code {
+            0 => Some(Self::Break),
+            1 => Some(Self::Reset),
+            2 => Some(Self::Error),
+            _ => None,
+        }
+    }
+}
+
 pub struct Art32 {
     cpu: Cpu,
     kernel_ram: Memory,
@@ -241,7 +259,7 @@ impl Art32 {
             .draw_debug_info(wgpu_state, render_target, encoder, text_renderer);
     }
 
-    pub fn step(&mut self) {
+    pub fn step(&mut self) -> Option<EnvAction> {
         let mut mmu = Mmu {
             kernel_ram: &mut self.kernel_ram,
             system_ram: &mut self.system_ram,
@@ -252,6 +270,8 @@ impl Art32 {
             start_time: &self.start_time,
         };
 
-        if let Some(code) = self.cpu.step(&mut mmu, &mut io_bus) {}
+        self.cpu
+            .step(&mut mmu, &mut io_bus)
+            .and_then(EnvAction::new)
     }
 }
