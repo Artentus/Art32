@@ -219,14 +219,19 @@ impl TextRenderer {
         let px_range = self.atlas.get_distance_range(font_size);
 
         let mut rel_x = 0.0;
+        let mut rel_y = 0.0;
         let mut prev: Option<char> = None;
         for c in text.chars() {
-            if let Some(glyph) = self.atlas.get_glyph(c) {
+            if c == '\n' {
+                rel_x = 0.0;
+                rel_y += self.atlas.line_height;
+                prev = None;
+            } else if let Some(glyph) = self.atlas.get_glyph(c) {
                 let kerning = self.atlas.get_kerning(prev, c);
 
                 if let Some(sprite) = &glyph.sprite {
-                    let top = sprite.bounds.top - self.atlas.ascender;
-                    let bottom = sprite.bounds.bottom - self.atlas.ascender;
+                    let top = rel_y + sprite.bounds.top - self.atlas.ascender;
+                    let bottom = rel_y + sprite.bounds.bottom - self.atlas.ascender;
                     let left = rel_x + sprite.bounds.left + kerning;
                     let right = rel_x + sprite.bounds.right + kerning;
 
