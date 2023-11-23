@@ -746,20 +746,21 @@ impl Cpu {
                                 )
                                 .unwrap();
 
-                                let imm = shuffle_bits!(instruction {
-                                    sign [31] => [9],
-                                    [30:27] => [8:5],
-                                    [11:7] => [4:0],
-                                });
-
-                                let addr = self.get_reg(rb).wrapping_add(imm);
                                 let result = if (instruction & 0x40) == 0 {
                                     // ld, in
+
+                                    let imm = shuffle_bits!(instruction {
+                                        sign [31] => [9],
+                                        [30:27] => [8:5],
+                                        [11:7] => [4:0],
+                                    });
 
                                     let rd = Register::try_from(
                                         shuffle_bits!(instruction { [16:12] => [4:0] }),
                                     )
                                     .unwrap();
+
+                                    let addr = self.get_reg(rb).wrapping_add(imm);
 
                                     match (instruction & 0x700_0000) >> 24 {
                                         0b000 | 0b001 /* ld.32 */ => mem
@@ -785,10 +786,18 @@ impl Cpu {
                                 } else {
                                     // st, out
 
+                                    let imm = shuffle_bits!(instruction {
+                                        sign [31] => [9],
+                                        [30:27] => [8:5],
+                                        [16:12] => [4:0],
+                                    });
+
                                     let rs = Register::try_from(
                                         shuffle_bits!(instruction { [11:8] => [3:0], [7] => [4] }),
                                     )
                                     .unwrap();
+
+                                    let addr = self.get_reg(rb).wrapping_add(imm);
 
                                     match (instruction & 0x600_0000) >> 25 {
                                         0b00 /* st.32 */ => {
