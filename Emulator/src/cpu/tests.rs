@@ -170,7 +170,7 @@ impl MemoryInterface for TestMemory<'_> {
 struct TestIo;
 
 impl IoInterface for TestIo {
-    fn read(&self, _addr: u32, _priv_level: PrivilegeLevel) -> Result<u32, ()> {
+    fn read(&mut self, _addr: u32, _priv_level: PrivilegeLevel) -> Result<u32, ()> {
         Err(())
     }
 

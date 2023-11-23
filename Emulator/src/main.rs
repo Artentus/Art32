@@ -65,6 +65,7 @@ macro_rules! shuffle_bits {
 use shuffle_bits;
 
 fn main() {
+    use std::io::Write;
     use std::sync::atomic::{self, AtomicBool};
     use std::sync::{Arc, Mutex};
     use std::thread;
@@ -134,6 +135,8 @@ fn main() {
                         None => (),
                     }
                 }
+
+                std::io::stdout().flush().unwrap();
             }
 
             thread::sleep(Duration::from_millis(1));
@@ -206,6 +209,8 @@ fn main() {
                                     }
                                     None => (),
                                 }
+
+                                std::io::stdout().flush().unwrap();
                             }
                         }
                         _ => (),

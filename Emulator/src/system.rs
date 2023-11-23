@@ -1,6 +1,7 @@
 use crate::cpu::interface::*;
 use crate::cpu::Cpu;
 use crate::memory::Memory;
+use std::collections::VecDeque;
 
 const KERNEL_RAM_SIZE: u32 = 0x0000_8000; // 32kB
 pub const KERNEL_RAM_START: u32 = 0x1000_0000;
@@ -187,22 +188,49 @@ const TIMER_LOW_ADDR: u32 = 0x080;
 const TIMER_HIGH_ADDR: u32 = 0x081;
 const TIMER_ACCURACY_ADDR: u32 = 0x082;
 
+const SERIAL_OUT_DATA_ADDR: u32 = 0x90;
+const SERIAL_OUT_COUNT_ADDR: u32 = 0x91;
+const SERIAL_IN_DATA_ADDR: u32 = 0x92;
+const SERIAL_IN_COUNT_ADDR: u32 = 0x93;
+
 pub struct IoBus<'a> {
     start_time: &'a std::time::Instant,
+    serial_buffer: &'a mut VecDeque<u8>,
 }
 
 impl IoInterface for IoBus<'_> {
-    fn read(&self, addr: u32, priv_level: PrivilegeLevel) -> Result<u32, ()> {
+    fn read(&mut self, addr: u32, priv_level: PrivilegeLevel) -> Result<u32, ()> {
         match addr {
             TIMER_LOW_ADDR => Ok(self.start_time.elapsed().as_nanos() as u32),
             TIMER_HIGH_ADDR => Ok((self.start_time.elapsed().as_nanos() >> 32) as u32),
             TIMER_ACCURACY_ADDR => Ok(1),
+
+            SERIAL_OUT_DATA_ADDR => Err(()),
+            SERIAL_OUT_COUNT_ADDR => Ok(u32::MAX),
+            SERIAL_IN_DATA_ADDR => Ok(self.serial_buffer.pop_front().unwrap_or(0) as u32),
+            SERIAL_IN_COUNT_ADDR => Ok(self.serial_buffer.len() as u32),
+
             _ => Err(()),
         }
     }
 
     fn write(&mut self, addr: u32, value: u32, priv_level: PrivilegeLevel) -> Result<(), ()> {
         match addr {
+            TIMER_LOW_ADDR => Err(()),
+            TIMER_HIGH_ADDR => Err(()),
+            TIMER_ACCURACY_ADDR => Err(()),
+
+            SERIAL_OUT_DATA_ADDR => {
+                let value = value as u8;
+                if let Some(c) = char::from_u32(value as u32) {
+                    print!("{c}");
+                }
+                Ok(())
+            }
+            SERIAL_OUT_COUNT_ADDR => Err(()),
+            SERIAL_IN_DATA_ADDR => Err(()),
+            SERIAL_IN_COUNT_ADDR => Err(()),
+
             _ => Err(()),
         }
     }
@@ -231,6 +259,7 @@ pub struct Art32 {
     kernel_ram: Memory,
     system_ram: Memory,
     start_time: std::time::Instant,
+    serial_buffer: VecDeque<u8>,
     reservation: Reservation,
 }
 
@@ -244,6 +273,7 @@ impl Art32 {
             kernel_ram,
             system_ram: Memory::new(SYSTEM_RAM_SIZE),
             start_time: std::time::Instant::now(),
+            serial_buffer: VecDeque::new(),
             reservation: Default::default(),
         }
     }
@@ -274,6 +304,7 @@ impl Art32 {
 
         let mut io_bus = IoBus {
             start_time: &self.start_time,
+            serial_buffer: &mut self.serial_buffer,
         };
 
         self.cpu

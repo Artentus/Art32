@@ -125,13 +125,13 @@
 }
 
 #ruledef Alu {
-    alu.i.{op: AluOp} {rd: Reg} , {rs1: Reg} , {imm: s10} => {
+    alu.i.{op: AluOp} {rd: Reg} , {rs1: Reg} , {imm: i10} => {
         assert(op == 0b000)
         assert(rd <= 15)
         assert(rd == rs1)
         le(rd`4 @ imm[4:0] @ imm[8:6] @ imm[9:9] @ imm[5:5] @ 0b10)
     }
-    alu.i.{op: AluOp} {rd: Reg} , {rs1: Reg} , {imm: s10} => {
+    alu.i.{op: AluOp} {rd: Reg} , {rs1: Reg} , {imm: i10} => {
         assert(op == 0b001)
         assert(rd <= 15)
         assert(rd == rs1)
@@ -140,19 +140,19 @@
         assert(nimm <= 511)
         le(rd`4 @ nimm[4:0] @ nimm[8:6] @ nimm[9:9] @ nimm[5:5] @ 0b10)
     }
-    alu.i.{op: AluOp} {rd: Reg} , {rs1: Reg} , {imm: s10} => {
+    alu.i.{op: AluOp} {rd: Reg} , {rs1: Reg} , {imm: i10} => {
         assert((op == 0b101) || (op == 0b110) || (op == 0b111))
         assert(rd <= 15)
         assert(rd == rs1)
         assert((imm >= 0) && (imm <= 31))
         le(rd`4 @ imm[4:0] @ op`2 @ 0b10111)
     }
-    alu.i.{op: AluOp} {rd: Reg} , {rs1: Reg} , {imm: s10} => {
+    alu.i.{op: AluOp} {rd: Reg} , {rs1: Reg} , {imm: i10} => {
         assert((op == 0b101) || (op == 0b110) || (op == 0b111))
         assert((imm >= 0) && (imm <= 31))
         le(0b00000 @ op @ 0b01 @ rs1 @ rd @ imm[4:0] @ 0b0111111)
     }
-    alu.i.{op: AluOp} {rd: Reg} , {rs1: Reg} , {imm: s10} => {
+    alu.i.{op: AluOp} {rd: Reg} , {rs1: Reg} , {imm: i10} => {
         assert((op != 0b101) && (op != 0b110) && (op != 0b111))
         le(imm[9:9] @ imm[8:5] @ op @ 0b01 @ rs1 @ rd @ imm[4:0] @ 0b0111111)
     }
@@ -176,12 +176,12 @@
 }
 
 #ruledef Move {
-    move.i.{cond: Condition} {rd: Reg} , {rs1: Reg} , {imm: s10} => {
+    move.i.{cond: Condition} {rd: Reg} , {rs1: Reg} , {imm: i10} => {
         assert(cond == 0b110)
         assert(rd <= 15)
         le(rd`4 @ imm[4:0] @ imm[8:6] @ imm[9:9] @ imm[5:5] @ 0b00)
     }
-    move.i.{cond: Condition} {rd: Reg} , {rs1: Reg} , {imm: s10} => {
+    move.i.{cond: Condition} {rd: Reg} , {rs1: Reg} , {imm: i10} => {
         le(imm[9:9] @ imm[8:5] @ cond @ 0b01 @ rs1 @ rd @ imm[4:0] @ 0b1111111)
     }
 
@@ -270,7 +270,6 @@
     movi.ge  {rd: Reg} , {rs1: Reg} , {imm: s10} => asm { move.i.ge   {rd}, {rs1}, {imm} }
     movi.lts {rd: Reg} , {rs1: Reg} , {imm: s10} => asm { move.i.lts  {rd}, {rs1}, {imm} }
     movi.ges {rd: Reg} , {rs1: Reg} , {imm: s10} => asm { move.i.ges  {rd}, {rs1}, {imm} }
-    ldi      {rd: Reg} ,              {imm: s10} => asm { move.i.true {rd}, {rd} , {imm} }
 
     ld.32  {rd: Reg} , [ {rb: Reg} , {imm: s10} ] => asm { load.32  {rd}, [{rb}, {imm}] }
     ld.8u  {rd: Reg} , [ {rb: Reg} , {imm: s10} ] => asm { load.8u  {rd}, [{rb}, {imm}] }
@@ -304,4 +303,42 @@
 
     addc {rd: Reg} , {rs1: Reg} , {rs2: Reg} => le(0b0000100011 @ rs1 @ rd @ rs2[3:0] @ rs2[4:4] @ 0b0111111)
     subc {rd: Reg} , {rs1: Reg} , {rs2: Reg} => le(0b0000100111 @ rs1 @ rd @ rs2[3:0] @ rs2[4:4] @ 0b0111111)
+}
+
+#ruledef PseudoInstructions {
+    cmpi {rs1: Reg} , {imm: s10} => asm { subi zero, {rs1}, {imm} }
+    cmp  {rs1: Reg} , {rs2: Reg} => asm { sub  zero, {rs1}, {rs2} }
+    cmpc {rs1: Reg} , {rs2: Reg} => asm { subc zero, {rs1}, {rs2} }
+
+    neg  {rd: Reg} , {rs: Reg} => asm { sub  {rd}, zero, {rs} }
+    negc {rd: Reg} , {rs: Reg} => asm { subc {rd}, zero, {rs} }
+
+    not {rd: Reg} , {rs: Reg} => asm { xori {rd}, {rs}, -1 }
+
+    ldi {rd: Reg} , {imm: i32} => {
+        assert((imm >= -512) && (imm <= 511))
+        short_imm = imm`10
+        asm { move.i.true {rd}, {rd} , {short_imm} }
+    }
+    ldi {rd: Reg} , {imm: i32} => {
+        assert((imm < -512) || (imm > 511))
+        high = imm & !0x3FF
+        low = imm`10
+        assert(low & 0x200 == 0x000)
+        asm {
+            ldui {rd}, {high}
+            alu.i.add {rd}, {rd}, {low}
+        }
+    }
+    ldi {rd: Reg} , {imm: i32} => {
+        assert((imm < -512) || (imm > 511))
+        high = imm & !0x3FF
+        low = imm`10
+        assert(low & 0x200 == 0x200)
+        high = high + 0x400
+        asm {
+            ldui {rd}, {high}
+            alu.i.add {rd}, {rd}, {low}
+        }
+    }
 }
