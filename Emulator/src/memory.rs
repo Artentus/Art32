@@ -4,9 +4,16 @@ use bytemuck::{cast_slice, cast_slice_mut};
 pub struct Memory(Box<[u32]>);
 
 impl Memory {
+    #[inline]
     pub fn new(size: u32) -> Self {
         debug_assert_eq!(size % 4, 0);
         Self(vec![0u32; (size / 4) as usize].into_boxed_slice())
+    }
+
+    #[inline]
+    pub fn reset(&mut self, data: &[u8]) {
+        let mem: &mut [u8] = cast_slice_mut(&mut self.0);
+        mem.copy_from_slice(data);
     }
 
     #[inline]

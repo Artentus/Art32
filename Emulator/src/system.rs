@@ -10,6 +10,8 @@ const SYSTEM_RAM_SIZE: u32 = 0x0010_0000; // 1MB
 const SYSTEM_RAM_START: u32 = 0x2000_0000;
 const SYSTEM_RAM_END: u32 = SYSTEM_RAM_START + SYSTEM_RAM_SIZE - 1;
 
+const KERNEL: &'static [u8; KERNEL_RAM_SIZE as usize] = include_bytes!("../kernel/kernel.bin");
+
 #[derive(Debug, Default)]
 #[repr(transparent)]
 struct Reservation {
@@ -234,9 +236,12 @@ pub struct Art32 {
 
 impl Art32 {
     pub fn new() -> Self {
+        let mut kernel_ram = Memory::new(KERNEL_RAM_SIZE);
+        kernel_ram.reset(KERNEL);
+
         Self {
             cpu: Cpu::new(),
-            kernel_ram: Memory::new(KERNEL_RAM_SIZE),
+            kernel_ram,
             system_ram: Memory::new(SYSTEM_RAM_SIZE),
             start_time: std::time::Instant::now(),
             reservation: Default::default(),
@@ -245,6 +250,7 @@ impl Art32 {
 
     pub fn reset(&mut self) {
         self.cpu.reset();
+        self.kernel_ram.reset(KERNEL);
         self.reservation.reset();
     }
 

@@ -134,15 +134,15 @@ fn main() {
                         None => (),
                     }
                 }
-            } else {
-                thread::sleep(Duration::from_millis(1));
             }
+
+            thread::sleep(Duration::from_millis(1));
         }
     }));
 
     let mut keyboard_modifiers = ModifiersState::empty();
     event_loop.run(move |event, _, control_flow| {
-        control_flow.set_wait();
+        control_flow.set_poll();
 
         match event {
             Event::WindowEvent {
@@ -239,12 +239,13 @@ fn main() {
 
                         wgpu_state.submit_encoder(encoder);
                         back_buffer.present();
-
-                        window.request_redraw();
                     }
                     Err(SurfaceError::Outdated) => {}
                     Err(err) => panic!("{err}"),
                 }
+            }
+            Event::RedrawEventsCleared => {
+                window.request_redraw();
             }
             _ => {}
         }
