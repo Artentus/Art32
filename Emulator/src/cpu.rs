@@ -28,6 +28,7 @@ const INT_MASK_ADDR: u32 = INT_CONFIG_START + 0;
 const INT_PENDING_ADDR: u32 = INT_CONFIG_START + 1;
 const PRIV_LEVEL_ADDR: u32 = INT_CONFIG_START + 2;
 const INT_RET_ADDR: u32 = INT_CONFIG_START + 3;
+const ALT_FLAGS_REG_ADDR: u32 = INT_CONFIG_START + 15;
 const ALT_REGS_START: u32 = 0x040;
 const ALT_REGS_END: u32 = ALT_REGS_START + (Register::COUNT as u32) - 1;
 
@@ -235,6 +236,9 @@ impl Cpu {
                 INT_RET_ADDR => {
                     return Ok(self.interrupt_return_address);
                 }
+                ALT_FLAGS_REG_ADDR => {
+                    return Ok(self.alt_state.flags.bits() as u32);
+                }
                 ALT_REGS_START..=ALT_REGS_END => {
                     let reg = Register::try_from(addr - ALT_REGS_START).unwrap();
                     return Ok(self.alt_state.regs.get(reg));
@@ -284,6 +288,10 @@ impl Cpu {
                 }
                 INT_RET_ADDR => {
                     self.interrupt_return_address = value & !0x1;
+                    return Ok(());
+                }
+                ALT_FLAGS_REG_ADDR => {
+                    self.alt_state.flags = Flags::from_bits_truncate(value as u8);
                     return Ok(());
                 }
                 ALT_REGS_START..=ALT_REGS_END => {
