@@ -318,13 +318,21 @@
     ldi {rd: Reg} , {imm: i32} => {
         assert((imm >= -512) && (imm <= 511))
         short_imm = imm`10
-        asm { move.i.true {rd}, {rd} , {short_imm} }
+        asm { move.i.true {rd}, {rd}, {short_imm} }
     }
     ldi {rd: Reg} , {imm: i32} => {
         assert((imm < -512) || (imm > 511))
         high = imm & !0x3FF
         low = imm`10
-        assert(low & 0x200 == 0x000)
+        assert(low == 0)
+        asm { ldui {rd}, {high} }
+    }
+    ldi {rd: Reg} , {imm: i32} => {
+        assert((imm < -512) || (imm > 511))
+        high = imm & !0x3FF
+        low = imm`10
+        assert(low != 0)
+        assert(low & 0x200 == 0)
         asm {
             ldui {rd}, {high}
             alu.i.add {rd}, {rd}, {low}
@@ -334,7 +342,8 @@
         assert((imm < -512) || (imm > 511))
         high = imm & !0x3FF
         low = imm`10
-        assert(low & 0x200 == 0x200)
+        assert(low != 0)
+        assert(low & 0x200 != 0)
         high = high + 0x400
         asm {
             ldui {rd}, {high}

@@ -1,5 +1,6 @@
 #include "art32.asm"
 #include "ports.asm"
+#include "env.asm"
 
 #bankdef KernelRam {
     #bits 8
@@ -9,22 +10,79 @@
     #fill 0
 }
 
-jr _start
+
+INTERRUPT_STACK_BASE = 0x1000_8000
+KERNEL_STACK_BASE = 0x1000_7F00
+
+
+__reset:
+    ; disable all interrupts
+    out [zero, INT_MASK_ADDR], zero
+    ; initialize interrupt stack
+    ldi sp, INTERRUPT_STACK_BASE
+
+    ; set default trap handlers
+    ldi a2, __unimplemented
+    out [zero, ILLEGAL_INSTRUCTION_SLOT_ADDR], a2
+    out [zero, ACCESS_VIOLATION_SLOT_ADDR], a2
+    
+    ; set default hardware interrupt handlers
+    ldi a0, HARD_INT_TABLE_START
+    ldi a1, HARD_INT_TABLE_END
+    .set_hard_ints:
+    out [a0, 0], a2
+    addi a0, a0, 1
+    cmp a0, a1
+    br.lt .set_hard_ints
+
+    ; set default software interrupt handlers
+    ldi a0, SOFT_INT_TABLE_START
+    ldi a1, SOFT_INT_TABLE_END
+    .set_soft_ints:
+    out [a0, 0], a2
+    addi a0, a0, 1
+    cmp a0, a1
+    br.lt .set_soft_ints
+
+    ; initialize kernel stack
+    ldi a0, KERNEL_STACK_BASE
+    out [zero, ALT_REGS_START + 2], a0
+    ; set privilege level to `system`
+    out [zero, PRIV_LEVEL_ADDR], zero
+    ; set kernel entry point address
+    ldi a0, __start
+    out [zero, INT_RET_ADDR], a0
+    ; jump into kernel
+    sysret
+
+__unimplemented:
+    ; we shouldn't be here
+    err
+    ; infinite loop to halt execution
+    .loop:
+    jr .loop
+
 
 MSG:
 #d "Hello world!\0"
 
-#align 16
-_start:
-    ; initialize stack
-    ldi sp, 0x1000_8000
 
+#align 16
+__start:
+    ; call main function
+    jrl kernel_main
+    ; we shouldn't be here
+    jr __unimplemented
+
+
+#align 16
+kernel_main:
     ldi a0, MSG
     jrl serial_print
 
     ; infinite loop to halt execution
-    hlt:
-    jr hlt
+    .loop:
+    jr .loop
 
 
 ; fn serial_print_char(c: u8{a0})
