@@ -1,0 +1,39 @@
+top mod Top {
+    let instruction_address: OutPort<30>;
+    let request_instruction_data: OutPort<1>;
+    let instruction_data: InPort<32>;
+
+    let instruction: OutPort<32>;
+    let instruction_16bit: OutPort<1>;
+    let instruction_valid: OutPort<1>;
+    let program_counter: OutPort<31>;
+    
+    let advance: InPort<1>;
+    let jump_target: InPort<31>;
+    let do_jump: InPort<1>;
+
+    let enable: InPort<1>;
+    let reset: InPort<1>;
+    let clk: InPort<1>;
+
+    let fetch_unit: FetchUnit;
+
+    comb {
+        instruction_address.d_out = fetch_unit.instruction_address;
+        request_instruction_data.d_out = fetch_unit.request_instruction_data;
+        fetch_unit.instruction_data = instruction_data.d_in;
+
+        instruction.d_out = fetch_unit.instruction;
+        instruction_16bit.d_out = fetch_unit.instruction_16bit;
+        instruction_valid.d_out = fetch_unit.instruction_valid;
+        program_counter.d_out = fetch_unit.program_counter;
+
+        fetch_unit.advance = advance.d_in;
+        fetch_unit.jump_target = jump_target.d_in;
+        fetch_unit.do_jump = do_jump.d_in;
+
+        fetch_unit.enable = enable.d_in;
+        fetch_unit.reset = reset.d_in;
+        fetch_unit.clk = clk.d_in;
+    }
+}

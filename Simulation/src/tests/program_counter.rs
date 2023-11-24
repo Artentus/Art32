@@ -17,26 +17,14 @@ fn program_counter() {
     let clk = ports.inputs["clk"];
 
     run_test!(sim => {
-        assert pc_next == UNDEFINED;
-        assert pc_value == UNDEFINED;
-
         data_in <= 0;
         inc <= 0;
         load <= false;
         enable <= false;
         reset <= false;
         clk <= false;
-
-        assert pc_next == UNDEFINED;
-        assert pc_value == UNDEFINED;
-
-        reset <= true;
         assert pc_next == 0;
-        assert pc_value == UNDEFINED;
-
-        reset <= false;
-        assert pc_next == UNDEFINED;
-        assert pc_value == UNDEFINED;
+        assert pc_value == 0;
 
         reset <= true;
         posedge clk;

@@ -1,6 +1,7 @@
 use gsim::*;
 
 mod adder;
+mod fetch_unit;
 mod program_counter;
 
 const MAX_SIM_STEPS: u64 = 1_000_000;
@@ -22,8 +23,8 @@ macro_rules! logic_state {
 
 use logic_state;
 
-fn assert_wire_state(
-    sim: &Simulator,
+fn assert_wire_state<VCD: std::io::Write>(
+    sim: &Simulator<VCD>,
     line: usize,
     wire: WireId,
     expected: &LogicState,
@@ -41,39 +42,49 @@ fn assert_wire_state(
 }
 
 macro_rules! run_test {
-    (@CHAIN $sim:ident; $line:expr;) => {};
-    (@CHAIN $sim:ident; $line:expr; $wire:ident <= $state:tt; $($t:tt)*) => {
-        let line = $line;
+    (@CHAIN $sim:ident; $line:expr; $time:expr;) => {};
+    (@CHAIN $sim:ident; $line:expr; $time:expr; $wire:ident <= $state:tt; $($t:tt)*) => {
+        let _line = $line;
         $sim.set_wire_drive($wire, &$crate::tests::logic_state!($state));
         $sim.run_sim($crate::tests::MAX_SIM_STEPS);
 
-        $crate::tests::run_test!(@CHAIN $sim; line + 1; $($t)*);
+        $crate::tests::run_test!(@CHAIN $sim; _line + 1; $time; $($t)*);
     };
-    (@CHAIN $sim:ident; $line:expr; posedge $wire:ident; $($t:tt)*) => {
-        let line = $line;
+    (@CHAIN $sim:ident; $line:expr; $time:expr; posedge $wire:ident; $($t:tt)*) => {
+        let _line = $line;
         $sim.set_wire_drive($wire, &$crate::tests::logic_state!(true));
         $sim.run_sim($crate::tests::MAX_SIM_STEPS);
 
-        $crate::tests::run_test!(@CHAIN $sim; line + 1; $($t)*);
+        $crate::tests::run_test!(@CHAIN $sim; _line + 1; $time; $($t)*);
     };
-    (@CHAIN $sim:ident; $line:expr; negedge $wire:ident; $($t:tt)*) => {
-        let line = $line;
+    (@CHAIN $sim:ident; $line:expr; $time:expr; negedge $wire:ident; $($t:tt)*) => {
+        let _line = $line;
         $sim.set_wire_drive($wire, &$crate::tests::logic_state!(false));
         $sim.run_sim($crate::tests::MAX_SIM_STEPS);
 
-        $crate::tests::run_test!(@CHAIN $sim; line + 1; $($t)*);
+        $crate::tests::run_test!(@CHAIN $sim; _line + 1; $time; $($t)*);
     };
-    (@CHAIN $sim:ident; $line:expr; assert $wire:ident == $state:tt; $($t:tt)*) => {
-        let line = $line;
+    (@CHAIN $sim:ident; $line:expr; $time:expr; assert $wire:ident == $state:tt; $($t:tt)*) => {
+        let _line = $line;
         let expected = $crate::tests::logic_state!($state);
         let statement = stringify!(assert $wire == $state);
-        $crate::tests::assert_wire_state(&$sim, line, $wire, &expected, statement);
+        $crate::tests::assert_wire_state(&$sim, _line, $wire, &expected, statement);
 
-        $crate::tests::run_test!(@CHAIN $sim; line + 1; $($t)*);
+        $crate::tests::run_test!(@CHAIN $sim; _line + 1; $time; $($t)*);
+    };
+    (@CHAIN $sim:ident; $line:expr; $time:expr; trace; $($t:tt)*) => {
+        let _line = $line;
+        $sim.trace($time).unwrap();
+
+        $crate::tests::run_test!(@CHAIN $sim; _line + 1; $time + 1; $($t)*);
+    };
+    ($sim:ident[$time:expr] => { $($t:tt)* }) => {
+        $sim.run_sim($crate::tests::MAX_SIM_STEPS);
+        $crate::tests::run_test!(@CHAIN $sim; 1; $time; $($t)*);
     };
     ($sim:ident => { $($t:tt)* }) => {
         $sim.run_sim($crate::tests::MAX_SIM_STEPS);
-        $crate::tests::run_test!(@CHAIN $sim; 1; $($t)*);
+        $crate::tests::run_test!(@CHAIN $sim; 1; 0; $($t)*);
     };
 }
 

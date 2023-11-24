@@ -49,8 +49,13 @@ fn main() {
             .output()
             .unwrap();
 
+        println!("{}", String::from_utf8_lossy(&quartz_output.stdout));
         if !quartz_output.status.success() {
-            panic!("{}", std::str::from_utf8(&quartz_output.stderr).unwrap());
+            println!(
+                "Quartz exit code: {}",
+                quartz_output.status.code().unwrap_or(0),
+            );
+            panic!("{}", String::from_utf8_lossy(&quartz_output.stderr));
         }
 
         let yosys_commands = format!("read_verilog -sv \"{sv_file}\"; read_verilog {yosys_input_files}; synth -top Top -flatten -noalumacc -nordff -run begin:fine; hierarchy -check; check; write_json \"{json_file}\"");
@@ -60,8 +65,13 @@ fn main() {
             .output()
             .unwrap();
 
+        println!("{}", String::from_utf8_lossy(&yosys_output.stdout));
         if !yosys_output.status.success() {
-            panic!("{}", std::str::from_utf8(&yosys_output.stderr).unwrap());
+            println!(
+                "Yosys exit code: {}",
+                yosys_output.status.code().unwrap_or(0),
+            );
+            panic!("{}", String::from_utf8_lossy(&yosys_output.stderr));
         }
     }
 }

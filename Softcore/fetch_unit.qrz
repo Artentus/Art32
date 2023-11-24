@@ -1,0 +1,142 @@
+mod FetchUnit (
+    out sig instruction_address: bits<30>,
+    out sig request_instruction_data: bool,
+    in sig instruction_data: bits<32>,
+
+    out sig instruction: bits<32>,
+    out sig instruction_16bit: bool,
+    out sig instruction_valid: bool,
+    out reg program_counter: bits<31>,
+    
+    in sig advance: bool,
+    in sig jump_target: bits<31>,
+    in sig do_jump: bool,
+
+    in sig enable: bool,
+    in sig reset: bool,
+    in sig clk: bit,
+) {
+    reg valid_half_words: bits<2>;
+    reg instruction_buffer: bits<48>;
+
+    comb {
+        instruction = instruction_buffer[0..32];
+        instruction_16bit = !((instruction_buffer[0..3] == 0x3) & (instruction_buffer[7] == 0b1)) & !(instruction_buffer[0..6] == 0x3F);
+        instruction_valid = (valid_half_words >= 2) | ((valid_half_words >= 1) & instruction_16bit);
+    }
+
+    sig next_program_counter: bits<31>;
+    sig next_valid_half_words: bits<2>;
+    sig next_instruction_buffer: bits<48>;
+    comb {
+        if reset {
+            instruction_address = 0;
+            next_program_counter = 0;
+            request_instruction_data = false;
+            next_valid_half_words = 0;
+            next_instruction_buffer = 0;
+        } else if do_jump {
+            instruction_address = jump_target[1..31];
+            next_program_counter = jump_target;
+            request_instruction_data = true;
+            
+            match jump_target[0] {
+                0 => {
+                    next_valid_half_words = 2;
+                    next_instruction_buffer = (0 as bits::<16>) @ instruction_data;
+                },
+                1 => {
+                    next_valid_half_words = 1;
+                    next_instruction_buffer = (0 as bits::<32>) @ instruction_data[16..32];
+                },
+            }
+        } else {
+            instruction_address = (program_counter + (valid_half_words as bits::<31>))[1..31];
+
+            if advance {
+                next_program_counter = if instruction_valid {
+                    if instruction_16bit {
+                        program_counter + 1
+                    } else {
+                        program_counter + 2
+                    }
+                } else {
+                    0
+                };
+
+                match valid_half_words {
+                    0 => {
+                        // illegal advance signal
+
+                        request_instruction_data = true;
+                        next_valid_half_words = 2;
+                        next_instruction_buffer = (0 as bits::<16>) @ instruction_data;
+                    },
+                    1 => {
+                        if instruction_16bit {
+                            request_instruction_data = true;
+                            next_valid_half_words = 2;
+                            next_instruction_buffer = (0 as bits::<16>) @ instruction_data;
+                        } else {
+                            // illegal advance signal
+
+                            request_instruction_data = true;
+                            next_valid_half_words = 3;
+                            next_instruction_buffer = instruction_data @ instruction_buffer[0..16];
+                        }
+                    },
+                    2 => {
+                        request_instruction_data = true;
+
+                        if instruction_16bit {
+                            next_valid_half_words = 3;
+                            next_instruction_buffer = instruction_data @ instruction_buffer[16..32];
+                        } else {
+                            next_valid_half_words = 2;
+                            next_instruction_buffer = (0 as bits::<16>) @ instruction_data;
+                        }
+                    },
+                    3 => {
+                        if instruction_16bit {
+                            request_instruction_data = false;
+                            next_valid_half_words = 2;
+                            next_instruction_buffer = (0 as bits::<16>) @ instruction_buffer[16..48];
+                        } else {
+                            request_instruction_data = true;
+                            next_valid_half_words = 3;
+                            next_instruction_buffer = instruction_data @ instruction_buffer[32..48];
+                        }
+                    },
+                }
+            } else {
+                next_program_counter = program_counter;
+
+                match valid_half_words {
+                    0 => {
+                        request_instruction_data = true;
+                        next_valid_half_words = 2;
+                        next_instruction_buffer = (0 as bits::<16>) @ instruction_data;
+                    },
+                    1 => {
+                        request_instruction_data = true;
+                        next_valid_half_words = 3;
+                        next_instruction_buffer = instruction_data @ instruction_buffer[0..16];
+                    },
+                    2 | 3 => {
+                        request_instruction_data = false;
+                        next_valid_half_words = valid_half_words;
+                        next_instruction_buffer = instruction_buffer;
+                    },
+                }
+            }
+        }
+    }
+
+    proc rising(clk) {
+        if reset | enable {
+            program_counter = next_program_counter;
+            valid_half_words = next_valid_half_words;
+            instruction_buffer = next_instruction_buffer;
+        }
+    }
+}

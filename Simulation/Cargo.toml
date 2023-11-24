@@ -7,7 +7,7 @@ edition = "2021"
 opt-level = 2
 
 [dependencies]
-gsim = { git = "https://github.com/Artentus/gsim.git", features = ["yosys-import", "dot-export"] }
+gsim = { git = "https://github.com/Artentus/gsim.git", features = ["yosys-import", "dot-export", "tracing"] }
 
 [build-dependencies]
 glob = "0.3.1"
