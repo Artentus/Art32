@@ -84,6 +84,17 @@
     out => 0b110
 }
 
+#subruledef MultiplyDivideOp {
+    mul    => 0b000
+    mulhuu => 0b001
+    mulhss => 0b010
+    mulhus => 0b011
+    divu   => 0b100
+    divs   => 0b101
+    remu   => 0b110
+    rems   => 0b111
+}
+
 #ruledef Jump {
     jump {rd: Reg} , {rb: Reg} , {imm: s14} => {
         assert(rd == 0)
@@ -226,6 +237,12 @@
     }
 }
 
+#ruledef MultiplyDivide {
+    muldiv.{op: MultiplyDivideOp} {rd: Reg} , {rs1: Reg} , {rs2: Reg} => {
+        le(0b00001 @ op @ 0b11 @ rs1 @ rd @ rs2[3:0] @ rs2[4:4] @ 0b1111111)
+    }
+}
+
 #ruledef Instructions {
     ldui  {rd: Reg} , {imm: i32} => {
         assert(imm & 0x3FF == 0)
@@ -303,6 +320,15 @@
 
     addc {rd: Reg} , {rs1: Reg} , {rs2: Reg} => le(0b0000100011 @ rs1 @ rd @ rs2[3:0] @ rs2[4:4] @ 0b0111111)
     subc {rd: Reg} , {rs1: Reg} , {rs2: Reg} => le(0b0000100111 @ rs1 @ rd @ rs2[3:0] @ rs2[4:4] @ 0b0111111)
+
+    mul    {rd: Reg} , {rs1: Reg} , {rs2: Reg} => asm { muldiv.mul    {rd}, {rs1}, {rs2} }
+    mulhuu {rd: Reg} , {rs1: Reg} , {rs2: Reg} => asm { muldiv.mulhuu {rd}, {rs1}, {rs2} }
+    mulhss {rd: Reg} , {rs1: Reg} , {rs2: Reg} => asm { muldiv.mulhss {rd}, {rs1}, {rs2} }
+    mulhus {rd: Reg} , {rs1: Reg} , {rs2: Reg} => asm { muldiv.mulhus {rd}, {rs1}, {rs2} }
+    divu   {rd: Reg} , {rs1: Reg} , {rs2: Reg} => asm { muldiv.divu   {rd}, {rs1}, {rs2} }
+    divs   {rd: Reg} , {rs1: Reg} , {rs2: Reg} => asm { muldiv.divs   {rd}, {rs1}, {rs2} }
+    remu   {rd: Reg} , {rs1: Reg} , {rs2: Reg} => asm { muldiv.remu   {rd}, {rs1}, {rs2} }
+    rems   {rd: Reg} , {rs1: Reg} , {rs2: Reg} => asm { muldiv.rems   {rd}, {rs1}, {rs2} }
 }
 
 #ruledef PseudoInstructions {

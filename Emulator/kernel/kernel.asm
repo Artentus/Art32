@@ -25,6 +25,7 @@ __reset:
     ldi a2, __unimplemented
     out [zero, ILLEGAL_INSTRUCTION_SLOT_ADDR], a2
     out [zero, ACCESS_VIOLATION_SLOT_ADDR], a2
+    out [zero, UNALIGNED_ACCESS_SLOT_ADDR], a2
     
     ; set default hardware interrupt handlers
     ldi a0, HARD_INT_TABLE_START
