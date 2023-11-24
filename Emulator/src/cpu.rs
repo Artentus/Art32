@@ -3,26 +3,55 @@ use register::*;
 
 pub mod interface;
 use interface::*;
-use strum::{EnumCount, IntoEnumIterator};
 
 #[cfg(test)]
 mod tests;
 
 use crate::{shuffle_bits, Ashr};
+use num_enum::{IntoPrimitive, TryFromPrimitive};
+use strum::{EnumCount, EnumMessage, IntoEnumIterator};
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, IntoPrimitive, TryFromPrimitive, EnumCount, EnumMessage,
+)]
+#[repr(usize)]
+enum ExceptionKind {
+    #[strum(message = "illegal instruction exception")]
+    IllegalInstruction = 0,
+    #[strum(message = "access violation exception")]
+    AccessViolation = 1,
+    #[strum(message = "unaligned access exception")]
+    UnalignedAccess = 2,
+}
+
+impl From<MemoryError> for ExceptionKind {
+    #[inline]
+    fn from(err: MemoryError) -> Self {
+        match err {
+            MemoryError::AccessViolation => Self::AccessViolation,
+            MemoryError::UnalignedAccess => Self::UnalignedAccess,
+        }
+    }
+}
+
+impl From<IoError> for ExceptionKind {
+    #[inline]
+    fn from(err: IoError) -> Self {
+        match err {
+            IoError::AccessViolation => Self::AccessViolation,
+        }
+    }
+}
 
 const HARD_INT_SLOTS: usize = 16;
 const SOFT_INT_SLOTS: usize = 16;
-
-const ILLEGAL_INSTRUCTION_SLOT: usize = 0;
-const ACCESS_VIOLATION_SLOT: usize = 1;
-const EXCEPTION_SLOTS: usize = 2;
 
 const HARD_INT_TABLE_START: u32 = 0x000;
 const HARD_INT_TABLE_END: u32 = HARD_INT_TABLE_START + (HARD_INT_SLOTS as u32) - 1;
 const SOFT_INT_TABLE_START: u32 = 0x010;
 const SOFT_INT_TABLE_END: u32 = SOFT_INT_TABLE_START + (SOFT_INT_SLOTS as u32) - 1;
 const EXCEPTION_TABLE_START: u32 = 0x020;
-const EXCEPTION_TABLE_END: u32 = EXCEPTION_TABLE_START + (EXCEPTION_SLOTS as u32) - 1;
+const EXCEPTION_TABLE_END: u32 = EXCEPTION_TABLE_START + (ExceptionKind::COUNT as u32) - 1;
 const INT_CONFIG_START: u32 = 0x030;
 const INT_MASK_ADDR: u32 = INT_CONFIG_START + 0;
 const INT_PENDING_ADDR: u32 = INT_CONFIG_START + 1;
@@ -66,7 +95,7 @@ pub struct Cpu {
     pending_interrupts: u16,
     hardware_interrupt_table: [u32; HARD_INT_SLOTS],
     software_interrupt_table: [u32; SOFT_INT_SLOTS],
-    exception_table: [u32; EXCEPTION_SLOTS],
+    exception_table: [u32; ExceptionKind::COUNT],
     interrupt_return_address: u32,
 }
 
@@ -181,24 +210,13 @@ impl Cpu {
         std::mem::swap(&mut self.state, &mut self.alt_state);
     }
 
-    fn illegal_instruction(&mut self) {
+    fn exception(&mut self, kind: ExceptionKind) {
         match self.interrupt_state {
             InterruptState::Servicing => {
-                panic!("illegal instruction exception inside interrupt handler")
+                panic!("{} inside interrupt handler", kind.get_message().unwrap())
             }
             InterruptState::Listening => {
-                self.enter_interrupt(self.exception_table[ILLEGAL_INSTRUCTION_SLOT]);
-            }
-        }
-    }
-
-    fn access_violation(&mut self) {
-        match self.interrupt_state {
-            InterruptState::Servicing => {
-                panic!("access violation exception inside interrupt handler")
-            }
-            InterruptState::Listening => {
-                self.enter_interrupt(self.exception_table[ACCESS_VIOLATION_SLOT]);
+                self.enter_interrupt(self.exception_table[usize::from(kind)]);
             }
         }
     }
@@ -208,7 +226,7 @@ impl Cpu {
         io: &mut Io,
         addr: u32,
         priv_level: PrivilegeLevel,
-    ) -> Result<u32, ()> {
+    ) -> Result<u32, IoError> {
         if priv_level == PrivilegeLevel::System {
             match addr {
                 HARD_INT_TABLE_START..=HARD_INT_TABLE_END => {
@@ -256,7 +274,7 @@ impl Cpu {
         addr: u32,
         value: u32,
         priv_level: PrivilegeLevel,
-    ) -> Result<(), ()> {
+    ) -> Result<(), IoError> {
         if priv_level == PrivilegeLevel::System {
             match addr {
                 HARD_INT_TABLE_START..=HARD_INT_TABLE_END => {
@@ -323,22 +341,20 @@ impl Cpu {
         result
     }
 
-    pub fn step<Mem: MemoryInterface, Io: IoInterface>(
+    #[inline]
+    fn step_inner<Mem: MemoryInterface, Io: IoInterface>(
         &mut self,
         mem: &mut Mem,
         io: &mut Io,
-    ) -> Option<u8> {
+    ) -> Result<Option<u8>, ExceptionKind> {
         if let Some(slot) = self.next_interrupt() {
             self.enter_interrupt(self.hardware_interrupt_table[slot]);
-            return None;
+            return Ok(None);
         }
 
         debug_assert_eq!(self.program_counter & 0x1, 0);
         let priv_level = self.effective_privilege_level();
-        let Ok(lower_inst) = mem.read_16(self.program_counter, priv_level, false) else {
-            self.access_violation();
-            return None;
-        };
+        let lower_inst = mem.read_16(self.program_counter, priv_level, false)?;
 
         let instruction = lower_inst as u32;
         self.program_counter = self.program_counter.wrapping_add(2);
@@ -406,10 +422,7 @@ impl Cpu {
                     self.program_counter = self.program_counter.wrapping_add(imm) & !0x1;
                 }
             } else {
-                let Ok(upper_inst) = mem.read_16(self.program_counter, priv_level, false) else {
-                    self.access_violation();
-                    return None;
-                };
+                let upper_inst = mem.read_16(self.program_counter, priv_level, false)?;
 
                 let instruction = instruction | ((upper_inst as u32) << 16);
                 self.program_counter = self.program_counter.wrapping_add(2);
@@ -526,7 +539,7 @@ impl Cpu {
                                             self.leave_interrupt();
                                         }
                                         InterruptState::Listening => {
-                                            self.illegal_instruction();
+                                            return Err(ExceptionKind::IllegalInstruction);
                                         }
                                     }
                                 }
@@ -537,13 +550,13 @@ impl Cpu {
                                     // ifence
                                 }
                                 0b0100..=0b1101 => {
-                                    self.illegal_instruction();
+                                    return Err(ExceptionKind::IllegalInstruction);
                                 }
                                 0b1110 => {
                                     // envcall
 
                                     let code = shuffle_bits!(instruction { [15:12] => [3:0] });
-                                    return Some(code as u8);
+                                    return Ok(Some(code as u8));
                                 }
                                 0b1111 => {
                                     // syscall
@@ -601,23 +614,15 @@ impl Cpu {
                         });
 
                         let addr = self.get_reg(Register::Sp).wrapping_add(imm);
-                        let result = if (instruction & 0x40) == 0 {
-                            mem.read_32(addr, priv_level, false)
-                                .map(|value| self.set_reg(rd_rs, value))
+                        if (instruction & 0x40) == 0 {
+                            let value = mem.read_32(addr, priv_level, false)?;
+                            self.set_reg(rd_rs, value);
                         } else {
                             let value = self.get_reg(rd_rs);
-                            mem.write_32(addr, value, priv_level, false).map(|_| ())
-                        };
-
-                        if result.is_err() {
-                            self.access_violation();
+                            mem.write_32(addr, value, priv_level, false)?;
                         }
                     } else {
-                        let Ok(upper_inst) = mem.read_16(self.program_counter, priv_level, false)
-                        else {
-                            self.access_violation();
-                            return None;
-                        };
+                        let upper_inst = mem.read_16(self.program_counter, priv_level, false)?;
 
                         let instruction = instruction | ((upper_inst as u32) << 16);
                         self.program_counter = self.program_counter.wrapping_add(2);
@@ -746,7 +751,7 @@ impl Cpu {
                                 )
                                 .unwrap();
 
-                                let result = if (instruction & 0x40) == 0 {
+                                if (instruction & 0x40) == 0 {
                                     // ld, in
 
                                     let imm = shuffle_bits!(instruction {
@@ -763,24 +768,30 @@ impl Cpu {
                                     let addr = self.get_reg(rb).wrapping_add(imm);
 
                                     match (instruction & 0x700_0000) >> 24 {
-                                        0b000 | 0b001 /* ld.32 */ => mem
-                                            .read_32(addr, priv_level, false)
-                                            .map(|value| self.set_reg(rd, value)),
-                                        0b010 /* ld.8u */ => mem
-                                            .read_8(addr, priv_level, false)
-                                            .map(|value| self.set_reg(rd, value as u32)),
-                                        0b011 /* ld.8s */ => mem.read_8(addr, priv_level, false).map(|value| {
-                                            self.set_reg(rd, ((value as i8) as i32) as u32)
-                                        }),
-                                        0b100 /* ld.16u */ => mem
-                                            .read_16(addr, priv_level, false)
-                                            .map(|value| self.set_reg(rd, value as u32)),
-                                        0b101 /* ld.16s */ => mem.read_16(addr, priv_level, false).map(|value| {
-                                            self.set_reg(rd, ((value as i16) as i32) as u32)
-                                        }),
-                                        0b110 | 0b111 /* in */ => self
-                                            .read_io(io, addr, priv_level)
-                                            .map(|value| self.set_reg(rd, value)),
+                                        0b000 | 0b001 /* ld.32 */ => {
+                                            let value = mem.read_32(addr, priv_level, false)?;
+                                            self.set_reg(rd, value);
+                                        }
+                                        0b010 /* ld.8u */ => {
+                                            let value = mem.read_8(addr, priv_level, false)?;
+                                            self.set_reg(rd, value as u32)
+                                        }
+                                        0b011 /* ld.8s */ => {
+                                            let value = mem.read_8(addr, priv_level, false)?;
+                                            self.set_reg(rd, ((value as i8) as i32) as u32);
+                                        }
+                                        0b100 /* ld.16u */ => {
+                                            let value = mem.read_16(addr, priv_level, false)?;
+                                            self.set_reg(rd, value as u32);
+                                        }
+                                        0b101 /* ld.16s */ => {
+                                            let value = mem.read_16(addr, priv_level, false)?;
+                                            self.set_reg(rd, ((value as i16) as i32) as u32);
+                                        }
+                                        0b110 | 0b111 /* in */ => {
+                                            let value = self.read_io(io, addr, priv_level)?;
+                                            self.set_reg(rd, value);
+                                        }
                                         _ => unreachable!(),
                                     }
                                 } else {
@@ -802,26 +813,22 @@ impl Cpu {
                                     match (instruction & 0x600_0000) >> 25 {
                                         0b00 /* st.32 */ => {
                                             let value = self.get_reg(rs);
-                                            mem.write_32(addr, value, priv_level, false).map(|_| ())
+                                            mem.write_32(addr, value, priv_level, false)?;
                                         }
                                         0b01 /* st.8 */ => {
                                             let value = self.get_reg(rs) as u8;
-                                            mem.write_8(addr, value, priv_level, false).map(|_| ())
+                                            mem.write_8(addr, value, priv_level, false)?;
                                         }
                                         0b10 /* st.16 */ => {
                                             let value = self.get_reg(rs) as u16;
-                                            mem.write_16(addr, value, priv_level, false).map(|_| ())
+                                            mem.write_16(addr, value, priv_level, false)?;
                                         }
                                         0b11 /* out */ => {
                                             let value = self.get_reg(rs);
-                                            self.write_io(io, addr, value, priv_level)
+                                            self.write_io(io, addr, value, priv_level)?;
                                         }
                                         _ => unreachable!(),
                                     }
-                                };
-
-                                if result.is_err() {
-                                    self.access_violation();
                                 }
                             }
                             0b11 => {
@@ -910,8 +917,7 @@ impl Cpu {
                                                 self.execute_add(lhs, !rhs, c_in)
                                             }
                                             0b010..=0b111 => {
-                                                self.illegal_instruction();
-                                                return None;
+                                                return Err(ExceptionKind::IllegalInstruction);
                                             }
                                             _ => unreachable!(),
                                         };
@@ -1004,8 +1010,7 @@ impl Cpu {
                                                 lhs % rhs
                                             }
                                             0b101 => {
-                                                self.illegal_instruction();
-                                                return None;
+                                                return Err(ExceptionKind::IllegalInstruction);
                                             }
                                             0b110 /* fmin */ => {
                                                 lhs.min(rhs)
@@ -1043,8 +1048,7 @@ impl Cpu {
                                                 value.sqrt()
                                             }
                                             0b111 => {
-                                                self.illegal_instruction();
-                                                return None;
+                                                return Err(ExceptionKind::IllegalInstruction);
                                             }
                                             _ => unreachable!(),
                                         };
@@ -1089,39 +1093,38 @@ impl Cpu {
                                                 self.set_reg(rd, result.to_bits());
                                             }
                                             0b010..=0b111 => {
-                                                self.illegal_instruction();
-                                                return None;
+                                                return Err(ExceptionKind::IllegalInstruction);
                                             }
                                             _ => unreachable!(),
                                         }
                                     }
                                     0b001000 | 0b001010 | 0b001100 | 0b001110 /* ldr */ => {
                                         let addr = self.get_reg(rs1_rb);
-                                        let result = match (instruction & 0x700_0000) >> 24 {
-                                            0b000 | 0b001 /* ldr.32 */ => mem
-                                                .read_32(addr, priv_level, true)
-                                                .map(|value| self.set_reg(rd, value)),
-                                            0b010 /* ldr.8u */ => mem
-                                                .read_8(addr, priv_level, true)
-                                                .map(|value| self.set_reg(rd, value as u32)),
-                                            0b011 /* ldr.8s */ => mem.read_8(addr, priv_level, true).map(|value| {
-                                                self.set_reg(rd, ((value as i8) as i32) as u32)
-                                            }),
-                                            0b100 /* ldr.16u */ => mem
-                                                .read_16(addr, priv_level, true)
-                                                .map(|value| self.set_reg(rd, value as u32)),
-                                            0b101 /* ldr.16s */ => mem.read_16(addr, priv_level, true).map(|value| {
-                                                self.set_reg(rd, ((value as i16) as i32) as u32)
-                                            }),
+                                        match (instruction & 0x700_0000) >> 24 {
+                                            0b000 | 0b001 /* ldr.32 */ => {
+                                                let value = mem
+                                                .read_32(addr, priv_level, true)?;
+                                                self.set_reg(rd, value);},
+                                            0b010 /* ldr.8u */ => {
+                                                let value = mem
+                                                .read_8(addr, priv_level, true)?;
+                                                self.set_reg(rd, value as u32);},
+                                            0b011 /* ldr.8s */ => {
+                                                let value = mem.read_8(addr, priv_level, true)?;
+                                                self.set_reg(rd, ((value as i8) as i32) as u32);
+                                            },
+                                            0b100 /* ldr.16u */ => {
+                                                let value = mem
+                                                .read_16(addr, priv_level, true)?;
+                                                self.set_reg(rd, value as u32);},
+                                            0b101 /* ldr.16s */ => {
+                                                let value = mem.read_16(addr, priv_level, true)?;
+                                                self.set_reg(rd, ((value as i16) as i32) as u32);
+                                            },
                                             0b110 | 0b111 => {
-                                                self.illegal_instruction();
-                                                return None;
+                                                return Err(ExceptionKind::IllegalInstruction);
                                             }
                                             _ => unreachable!(),
-                                        };
-
-                                        if result.is_err() {
-                                            self.access_violation();
                                         }
                                     }
                                     0b001001 | 0b001011 | 0b001101 | 0b001111 /* stc */ => {
@@ -1134,29 +1137,24 @@ impl Cpu {
                                         let result = match (instruction & 0x600_0000) >> 25 {
                                             0b00 /* stc.32 */ => {
                                                 let value = self.get_reg(rs);
-                                                mem.write_32(addr, value, priv_level, true)
+                                                mem.write_32(addr, value, priv_level, true)?
                                             }
                                             0b01 /* stc.8 */ => {
                                                 let value = self.get_reg(rs) as u8;
-                                                mem.write_8(addr, value, priv_level, true)
+                                                mem.write_8(addr, value, priv_level, true)?
                                             }
                                             0b10 /* stc.16 */ => {
                                                 let value = self.get_reg(rs) as u16;
-                                                mem.write_16(addr, value, priv_level, true)
+                                                mem.write_16(addr, value, priv_level, true)?
                                             }
                                             0b11 => {
-                                                self.illegal_instruction();
-                                                return None;
+                                                return Err(ExceptionKind::IllegalInstruction);
                                             }
                                             _ => unreachable!(),
                                         };
-
-                                        match result {
-                                            Ok(value) => self.set_reg(rd, value as u32),
-                                            Err(_) => self.access_violation(),
-                                        }
+                                        self.set_reg(rd, result as u32);
                                     }
-                                    _ => self.illegal_instruction(),
+                                    _ => return Err(ExceptionKind::IllegalInstruction),
                                 }
                             }
                             _ => unreachable!(),
@@ -1167,6 +1165,20 @@ impl Cpu {
             }
         }
 
-        None
+        Ok(None)
+    }
+
+    pub fn step<Mem: MemoryInterface, Io: IoInterface>(
+        &mut self,
+        mem: &mut Mem,
+        io: &mut Io,
+    ) -> Option<u8> {
+        match self.step_inner(mem, io) {
+            Ok(code) => code,
+            Err(kind) => {
+                self.exception(kind);
+                None
+            }
+        }
     }
 }

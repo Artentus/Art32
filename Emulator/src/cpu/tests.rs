@@ -56,7 +56,11 @@ impl MemoryInterface for TestMemory<'_> {
         addr: u32,
         _priv_level: PrivilegeLevel,
         _reserve: bool,
-    ) -> Result<u32, ()> {
+    ) -> Result<u32, MemoryError> {
+        if (addr & 0x3) != 0 {
+            return Err(MemoryError::UnalignedAccess);
+        }
+
         let mem_end = RESET_PROGRAM_COUNTER + ((self.mem.len() * 4) as u32) - 1;
 
         if (RESET_PROGRAM_COUNTER..=mem_end).contains(&addr) {
@@ -65,7 +69,7 @@ impl MemoryInterface for TestMemory<'_> {
                 mem[((addr - RESET_PROGRAM_COUNTER) >> 2) as usize],
             ))
         } else {
-            Err(())
+            Err(MemoryError::AccessViolation)
         }
     }
 
@@ -74,7 +78,11 @@ impl MemoryInterface for TestMemory<'_> {
         addr: u32,
         _priv_level: PrivilegeLevel,
         _reserve: bool,
-    ) -> Result<u16, ()> {
+    ) -> Result<u16, MemoryError> {
+        if (addr & 0x1) != 0 {
+            return Err(MemoryError::UnalignedAccess);
+        }
+
         let mem_end = RESET_PROGRAM_COUNTER + ((self.mem.len() * 4) as u32) - 1;
 
         if (RESET_PROGRAM_COUNTER..=mem_end).contains(&addr) {
@@ -83,11 +91,16 @@ impl MemoryInterface for TestMemory<'_> {
                 mem[((addr - RESET_PROGRAM_COUNTER) >> 1) as usize],
             ))
         } else {
-            Err(())
+            Err(MemoryError::AccessViolation)
         }
     }
 
-    fn read_8(&mut self, addr: u32, _priv_level: PrivilegeLevel, _reserve: bool) -> Result<u8, ()> {
+    fn read_8(
+        &mut self,
+        addr: u32,
+        _priv_level: PrivilegeLevel,
+        _reserve: bool,
+    ) -> Result<u8, MemoryError> {
         let mem_end = RESET_PROGRAM_COUNTER + ((self.mem.len() * 4) as u32) - 1;
 
         if (RESET_PROGRAM_COUNTER..=mem_end).contains(&addr) {
@@ -96,7 +109,7 @@ impl MemoryInterface for TestMemory<'_> {
                 mem[((addr - RESET_PROGRAM_COUNTER) >> 0) as usize],
             ))
         } else {
-            Err(())
+            Err(MemoryError::AccessViolation)
         }
     }
 
@@ -106,7 +119,11 @@ impl MemoryInterface for TestMemory<'_> {
         value: u32,
         _priv_level: PrivilegeLevel,
         conditional: bool,
-    ) -> Result<bool, ()> {
+    ) -> Result<bool, MemoryError> {
+        if (addr & 0x3) != 0 {
+            return Err(MemoryError::UnalignedAccess);
+        }
+
         let mem_end = RESET_PROGRAM_COUNTER + ((self.mem.len() * 4) as u32) - 1;
         let do_write = self.pass_cond | !conditional;
 
@@ -118,7 +135,7 @@ impl MemoryInterface for TestMemory<'_> {
 
             Ok(do_write)
         } else {
-            Err(())
+            Err(MemoryError::AccessViolation)
         }
     }
 
@@ -128,7 +145,11 @@ impl MemoryInterface for TestMemory<'_> {
         value: u16,
         _priv_level: PrivilegeLevel,
         conditional: bool,
-    ) -> Result<bool, ()> {
+    ) -> Result<bool, MemoryError> {
+        if (addr & 0x1) != 0 {
+            return Err(MemoryError::UnalignedAccess);
+        }
+
         let mem_end = RESET_PROGRAM_COUNTER + ((self.mem.len() * 4) as u32) - 1;
         let do_write = self.pass_cond | !conditional;
 
@@ -140,7 +161,7 @@ impl MemoryInterface for TestMemory<'_> {
 
             Ok(do_write)
         } else {
-            Err(())
+            Err(MemoryError::AccessViolation)
         }
     }
 
@@ -150,7 +171,7 @@ impl MemoryInterface for TestMemory<'_> {
         value: u8,
         _priv_level: PrivilegeLevel,
         conditional: bool,
-    ) -> Result<bool, ()> {
+    ) -> Result<bool, MemoryError> {
         let mem_end = RESET_PROGRAM_COUNTER + ((self.mem.len() * 4) as u32) - 1;
         let do_write = self.pass_cond | !conditional;
 
@@ -162,7 +183,7 @@ impl MemoryInterface for TestMemory<'_> {
 
             Ok(do_write)
         } else {
-            Err(())
+            Err(MemoryError::AccessViolation)
         }
     }
 }
@@ -170,11 +191,16 @@ impl MemoryInterface for TestMemory<'_> {
 struct TestIo;
 
 impl IoInterface for TestIo {
-    fn read(&mut self, _addr: u32, _priv_level: PrivilegeLevel) -> Result<u32, ()> {
-        Err(())
+    fn read(&mut self, _addr: u32, _priv_level: PrivilegeLevel) -> Result<u32, IoError> {
+        Err(IoError::AccessViolation)
     }
 
-    fn write(&mut self, _addr: u32, _value: u32, _priv_level: PrivilegeLevel) -> Result<(), ()> {
-        Err(())
+    fn write(
+        &mut self,
+        _addr: u32,
+        _value: u32,
+        _priv_level: PrivilegeLevel,
+    ) -> Result<(), IoError> {
+        Err(IoError::AccessViolation)
     }
 }

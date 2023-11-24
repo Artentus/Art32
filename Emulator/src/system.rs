@@ -48,7 +48,16 @@ pub struct Mmu<'a> {
 }
 
 impl MemoryInterface for Mmu<'_> {
-    fn read_32(&mut self, addr: u32, priv_level: PrivilegeLevel, reserve: bool) -> Result<u32, ()> {
+    fn read_32(
+        &mut self,
+        addr: u32,
+        priv_level: PrivilegeLevel,
+        reserve: bool,
+    ) -> Result<u32, MemoryError> {
+        if (addr & 0x3) != 0 {
+            return Err(MemoryError::UnalignedAccess);
+        }
+
         if reserve {
             self.reservation.take(addr);
         }
@@ -60,11 +69,20 @@ impl MemoryInterface for Mmu<'_> {
             SYSTEM_RAM_START..=SYSTEM_RAM_END => {
                 Ok(self.system_ram.read_32(addr - SYSTEM_RAM_START))
             }
-            _ => Err(()),
+            _ => Err(MemoryError::AccessViolation),
         }
     }
 
-    fn read_16(&mut self, addr: u32, priv_level: PrivilegeLevel, reserve: bool) -> Result<u16, ()> {
+    fn read_16(
+        &mut self,
+        addr: u32,
+        priv_level: PrivilegeLevel,
+        reserve: bool,
+    ) -> Result<u16, MemoryError> {
+        if (addr & 0x1) != 0 {
+            return Err(MemoryError::UnalignedAccess);
+        }
+
         if reserve {
             self.reservation.take(addr);
         }
@@ -76,11 +94,16 @@ impl MemoryInterface for Mmu<'_> {
             SYSTEM_RAM_START..=SYSTEM_RAM_END => {
                 Ok(self.system_ram.read_16(addr - SYSTEM_RAM_START))
             }
-            _ => Err(()),
+            _ => Err(MemoryError::AccessViolation),
         }
     }
 
-    fn read_8(&mut self, addr: u32, priv_level: PrivilegeLevel, reserve: bool) -> Result<u8, ()> {
+    fn read_8(
+        &mut self,
+        addr: u32,
+        priv_level: PrivilegeLevel,
+        reserve: bool,
+    ) -> Result<u8, MemoryError> {
         if reserve {
             self.reservation.take(addr);
         }
@@ -92,7 +115,7 @@ impl MemoryInterface for Mmu<'_> {
             SYSTEM_RAM_START..=SYSTEM_RAM_END => {
                 Ok(self.system_ram.read_8(addr - SYSTEM_RAM_START))
             }
-            _ => Err(()),
+            _ => Err(MemoryError::AccessViolation),
         }
     }
 
@@ -102,7 +125,11 @@ impl MemoryInterface for Mmu<'_> {
         value: u32,
         priv_level: PrivilegeLevel,
         conditional: bool,
-    ) -> Result<bool, ()> {
+    ) -> Result<bool, MemoryError> {
+        if (addr & 0x3) != 0 {
+            return Err(MemoryError::UnalignedAccess);
+        }
+
         let is_reserved = self.reservation.check_write(addr);
         let do_write = is_reserved | !conditional;
 
@@ -121,7 +148,7 @@ impl MemoryInterface for Mmu<'_> {
 
                 Ok(do_write)
             }
-            _ => Err(()),
+            _ => Err(MemoryError::AccessViolation),
         }
     }
 
@@ -131,7 +158,11 @@ impl MemoryInterface for Mmu<'_> {
         value: u16,
         priv_level: PrivilegeLevel,
         conditional: bool,
-    ) -> Result<bool, ()> {
+    ) -> Result<bool, MemoryError> {
+        if (addr & 0x1) != 0 {
+            return Err(MemoryError::UnalignedAccess);
+        }
+
         let is_reserved = self.reservation.check_write(addr);
         let do_write = is_reserved | !conditional;
 
@@ -150,7 +181,7 @@ impl MemoryInterface for Mmu<'_> {
 
                 Ok(do_write)
             }
-            _ => Err(()),
+            _ => Err(MemoryError::AccessViolation),
         }
     }
 
@@ -160,7 +191,7 @@ impl MemoryInterface for Mmu<'_> {
         value: u8,
         priv_level: PrivilegeLevel,
         conditional: bool,
-    ) -> Result<bool, ()> {
+    ) -> Result<bool, MemoryError> {
         let is_reserved = self.reservation.check_write(addr);
         let do_write = is_reserved | !conditional;
 
@@ -179,7 +210,7 @@ impl MemoryInterface for Mmu<'_> {
 
                 Ok(do_write)
             }
-            _ => Err(()),
+            _ => Err(MemoryError::AccessViolation),
         }
     }
 }
@@ -199,26 +230,26 @@ pub struct IoBus<'a> {
 }
 
 impl IoInterface for IoBus<'_> {
-    fn read(&mut self, addr: u32, priv_level: PrivilegeLevel) -> Result<u32, ()> {
+    fn read(&mut self, addr: u32, priv_level: PrivilegeLevel) -> Result<u32, IoError> {
         match addr {
             TIMER_LOW_ADDR => Ok(self.start_time.elapsed().as_nanos() as u32),
             TIMER_HIGH_ADDR => Ok((self.start_time.elapsed().as_nanos() >> 32) as u32),
             TIMER_ACCURACY_ADDR => Ok(1),
 
-            SERIAL_OUT_DATA_ADDR => Err(()),
+            SERIAL_OUT_DATA_ADDR => Err(IoError::AccessViolation),
             SERIAL_OUT_COUNT_ADDR => Ok(u32::MAX),
             SERIAL_IN_DATA_ADDR => Ok(self.serial_buffer.pop_front().unwrap_or(0) as u32),
             SERIAL_IN_COUNT_ADDR => Ok(self.serial_buffer.len() as u32),
 
-            _ => Err(()),
+            _ => Err(IoError::AccessViolation),
         }
     }
 
-    fn write(&mut self, addr: u32, value: u32, priv_level: PrivilegeLevel) -> Result<(), ()> {
+    fn write(&mut self, addr: u32, value: u32, priv_level: PrivilegeLevel) -> Result<(), IoError> {
         match addr {
-            TIMER_LOW_ADDR => Err(()),
-            TIMER_HIGH_ADDR => Err(()),
-            TIMER_ACCURACY_ADDR => Err(()),
+            TIMER_LOW_ADDR => Err(IoError::AccessViolation),
+            TIMER_HIGH_ADDR => Err(IoError::AccessViolation),
+            TIMER_ACCURACY_ADDR => Err(IoError::AccessViolation),
 
             SERIAL_OUT_DATA_ADDR => {
                 let value = value as u8;
@@ -227,11 +258,11 @@ impl IoInterface for IoBus<'_> {
                 }
                 Ok(())
             }
-            SERIAL_OUT_COUNT_ADDR => Err(()),
-            SERIAL_IN_DATA_ADDR => Err(()),
-            SERIAL_IN_COUNT_ADDR => Err(()),
+            SERIAL_OUT_COUNT_ADDR => Err(IoError::AccessViolation),
+            SERIAL_IN_DATA_ADDR => Err(IoError::AccessViolation),
+            SERIAL_IN_COUNT_ADDR => Err(IoError::AccessViolation),
 
-            _ => Err(()),
+            _ => Err(IoError::AccessViolation),
         }
     }
 }
