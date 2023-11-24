@@ -342,6 +342,687 @@ impl Cpu {
     }
 
     #[inline]
+    fn ldi_addi_16(&mut self, instruction: u32) {
+        let rd_rs1 = Register::try_from(shuffle_bits!(instruction { [15:12] => [3:0] })).unwrap();
+
+        let imm = shuffle_bits!(instruction {
+            [11:7] => [4:0],
+            [6:4] => [8:6],
+            sign [3] => [9],
+            [2] => [5],
+        });
+
+        if (instruction & 0x2) == 0 {
+            self.set_reg(rd_rs1, imm);
+        } else {
+            let sum = self.execute_add(self.get_reg(rd_rs1), imm, false);
+            self.state.flags.set(Flags::ZERO, sum == 0);
+            self.set_reg(rd_rs1, sum);
+        }
+    }
+
+    #[inline]
+    fn jump_16(&mut self, instruction: u32) {
+        let rb = Register::try_from(shuffle_bits!(instruction { [15:12] => [3:0] })).unwrap();
+
+        let imm = shuffle_bits!(instruction {
+            [11:8] => [4:1],
+            [7] => [5],
+            [6:4] => [8:6],
+            sign [3] => [9],
+        });
+
+        let jump_addr = self.get_reg(rb).wrapping_add(imm) & !0x1;
+        if (instruction & 0x4) != 0 {
+            self.set_reg(Register::Ra, self.program_counter);
+        }
+        self.program_counter = jump_addr;
+    }
+
+    #[inline]
+    fn branch_16(&mut self, instruction: u32) {
+        let cond =
+            BranchCondition::try_from(shuffle_bits!(instruction { [14:12] => [2:0] })).unwrap();
+
+        let imm = shuffle_bits!(instruction {
+            [15] => [5],
+            [11:8] => [4:1],
+            [6:4] => [8:6],
+            sign [3] => [9],
+        });
+
+        if cond == BranchCondition::Link {
+            self.set_reg(Register::Ra, self.program_counter);
+        }
+
+        if self.state.flags.satisfy_branch(cond) {
+            self.program_counter = self.program_counter.wrapping_add(imm) & !0x1;
+        }
+    }
+
+    #[inline]
+    fn uimm_32(&mut self, instruction: u32) {
+        let rd = Register::try_from(shuffle_bits!(instruction { [16:12] => [4:0] })).unwrap();
+
+        let imm = shuffle_bits!(instruction {
+            sign [31] => [31],
+            [30:27] => [30:27],
+            [26:24] => [12:10],
+            [23:22] => [14:13],
+            [21:17] => [19:15],
+            [11:8] => [26:23],
+            [6:4] => [22:20],
+        });
+
+        if (instruction & 0x8) == 0 {
+            self.set_reg(rd, imm);
+        } else {
+            self.set_reg(rd, self.program_counter.wrapping_add(imm));
+        }
+    }
+
+    #[inline]
+    fn alu_16(&mut self, instruction: u32) {
+        let rd_rs1 = Register::try_from(shuffle_bits!(instruction { [15:12] => [3:0] })).unwrap();
+        let rs2 = Register::try_from(shuffle_bits!(instruction { [11:8] => [3:0] })).unwrap();
+
+        let lhs = self.get_reg(rd_rs1);
+        let rhs = self.get_reg(rs2);
+        let result = match (instruction & 0xE0) >> 5 {
+            0b000 /* add */ => self.execute_add(lhs, rhs, false),
+            0b001 /* sub */ => self.execute_add(lhs, !rhs, true),
+            0b010 /* and */ => lhs & rhs,
+            0b011 /* or */ => lhs | rhs,
+            0b100 /* xor */ =>  lhs ^ rhs,
+            0b101 /* shl */ => lhs << (rhs & 0x1F),
+            0b110 /* lsr */ => lhs >> (rhs & 0x1F),
+            0b111 /* asr */ => lhs.ashr(rhs & 0x1F),
+            _ => unreachable!(),
+        };
+
+        self.set_reg(rd_rs1, result);
+        self.state.flags.set(Flags::ZERO, result == 0);
+    }
+
+    #[inline]
+    fn mov_16(&mut self, instruction: u32) {
+        let rd_rs1 = Register::try_from(shuffle_bits!(instruction { [15:12] => [3:0] })).unwrap();
+        let rs2 = Register::try_from(shuffle_bits!(instruction { [11:8] => [3:0] })).unwrap();
+        let cond = Condition::try_from(shuffle_bits!(instruction { [7:5] => [2:0] })).unwrap();
+
+        if self.state.flags.satisfy(cond) {
+            let value = self.get_reg(rs2);
+            self.set_reg(rd_rs1, value);
+        };
+    }
+
+    #[inline]
+    fn cmp_16(&mut self, instruction: u32) {
+        let rs1 = Register::try_from(shuffle_bits!(instruction { [15:12] => [3:0] })).unwrap();
+        let rs2 = Register::try_from(shuffle_bits!(instruction { [11:8] => [3:0] })).unwrap();
+
+        let lhs = self.get_reg(rs1);
+        let rhs = self.get_reg(rs2);
+        let result = self.execute_add(lhs, !rhs, true);
+        self.state.flags.set(Flags::ZERO, result == 0);
+    }
+
+    #[inline]
+    fn sys_16(&mut self, instruction: u32) -> Result<Option<u8>, ExceptionKind> {
+        match (instruction & 0xF00) >> 8 {
+            0b0000 /* ret */ => {
+                self.program_counter = self.get_reg(Register::Ra) & !0x1;
+            }
+            0b0001 /* sysret */ => {
+                match self.interrupt_state {
+                    InterruptState::Servicing => {
+                        self.leave_interrupt();
+                    }
+                    InterruptState::Listening => {
+                        return Err(ExceptionKind::IllegalInstruction);
+                    }
+                }
+            }
+            0b0010 /* fence */ => (),
+            0b0011 /* ifence */ => (),
+            0b0100..=0b1101 => {
+                return Err(ExceptionKind::IllegalInstruction);
+            }
+            0b1110 /* envcall */ => {
+                let code = shuffle_bits!(instruction { [15:12] => [3:0] });
+                return Ok(Some(code as u8));
+            }
+            0b1111 /* syscall */ => {
+                match self.interrupt_state {
+                    InterruptState::Servicing => {
+                        panic!("software interrupt inside interrupt handler")
+                    }
+                    InterruptState::Listening => {
+                        let slot = shuffle_bits!(instruction { [15:12] => [3:0] }) as usize;
+                        self.enter_interrupt(self.software_interrupt_table[slot]);
+                    }
+                }
+            }
+            _ => unreachable!(),
+        }
+
+        Ok(None)
+    }
+
+    #[inline]
+    fn alui_16(&mut self, instruction: u32) {
+        let rd_rs1 = Register::try_from(shuffle_bits!(instruction { [15:12] => [3:0] })).unwrap();
+
+        let imm = shuffle_bits!(instruction {
+            [11:7] => [4:0],
+        });
+
+        let lhs = self.get_reg(rd_rs1);
+        let result = match (instruction & 0x60) >> 5 {
+            0b01 /* shli */ => lhs << imm,
+            0b10 /* lsri */ => lhs >> imm,
+            0b11 /* asri */ => lhs.ashr(imm),
+            _ => unreachable!(),
+        };
+
+        self.set_reg(rd_rs1, result);
+        self.state.flags.set(Flags::ZERO, result == 0);
+    }
+
+    #[inline]
+    fn mem_16<Mem: MemoryInterface>(
+        &mut self,
+        instruction: u32,
+        priv_level: PrivilegeLevel,
+        mem: &mut Mem,
+    ) -> Result<(), ExceptionKind> {
+        let rd_rs = Register::try_from(shuffle_bits!(instruction { [15:12] => [3:0] })).unwrap();
+
+        let imm = shuffle_bits!(instruction {
+            [11:9] => [4:2],
+            [8:7] => [6:5],
+        });
+
+        let addr = self.get_reg(Register::Sp).wrapping_add(imm);
+        if (instruction & 0x40) == 0 {
+            let value = mem.read_32(addr, priv_level, false)?;
+            self.set_reg(rd_rs, value);
+        } else {
+            let value = self.get_reg(rd_rs);
+            mem.write_32(addr, value, priv_level, false)?;
+        }
+
+        Ok(())
+    }
+
+    #[inline]
+    fn jump_32(&mut self, instruction: u32) {
+        let rd = Register::try_from(shuffle_bits!(instruction { [16:12] => [4:0] })).unwrap();
+        let rb = Register::try_from(shuffle_bits!(instruction { [21:17] => [4:0] })).unwrap();
+
+        let imm = shuffle_bits!(instruction {
+            sign [31] => [13],
+            [30:27] => [8:5],
+            [26:24] => [12:10],
+            [11:8] => [4:1],
+            [7] => [9],
+        });
+
+        let jump_addr = self.get_reg(rb).wrapping_add(imm) & !0x1;
+        self.set_reg(rd, self.program_counter);
+        self.program_counter = jump_addr;
+    }
+
+    #[inline]
+    fn branch_32(&mut self, instruction: u32) {
+        let cond =
+            BranchCondition::try_from(shuffle_bits!(instruction { [14:12] => [2:0] })).unwrap();
+
+        let imm = shuffle_bits!(instruction {
+            sign [31] => [20],
+            [30:27] => [8:5],
+            [26:24] => [12:10],
+            [21:15] => [19:13],
+            [11:8] => [4:1],
+            [7] => [9],
+        });
+
+        if cond == BranchCondition::Link {
+            self.set_reg(Register::Ra, self.program_counter);
+        }
+
+        if self.state.flags.satisfy_branch(cond) {
+            self.program_counter = self.program_counter.wrapping_add(imm) & !0x1;
+        }
+    }
+
+    #[inline]
+    fn alui_32(&mut self, instruction: u32) {
+        let rd = Register::try_from(shuffle_bits!(instruction { [16:12] => [4:0] })).unwrap();
+        let rs1 = Register::try_from(shuffle_bits!(instruction { [21:17] => [4:0] })).unwrap();
+
+        let imm = shuffle_bits!(instruction {
+            sign [31] => [9],
+            [30:27] => [8:5],
+            [11:7] => [4:0],
+        });
+
+        let lhs = self.get_reg(rs1);
+        let result = match (instruction & 0x700_0000) >> 24 {
+            0b000 /* addi */ => self.execute_add(lhs, imm, false),
+            0b001 /* subi */ => self.execute_add(lhs, !imm, true),
+            0b010 /* andi */ => lhs & imm,
+            0b011 /* ori */ => lhs | imm,
+            0b100 /* xori */ => lhs ^ imm,
+            0b101 /* shli */ => lhs << (imm & 0x1F),
+            0b110 /* lsri */ => lhs >> (imm & 0x1F),
+            0b111 /* asri */ => lhs.ashr(imm & 0x1F),
+            _ => unreachable!(),
+        };
+
+        self.set_reg(rd, result);
+        self.state.flags.set(Flags::ZERO, result == 0);
+    }
+
+    #[inline]
+    fn movi_32(&mut self, instruction: u32) {
+        let rd = Register::try_from(shuffle_bits!(instruction { [16:12] => [4:0] })).unwrap();
+        let rs1 = Register::try_from(shuffle_bits!(instruction { [21:17] => [4:0] })).unwrap();
+        let cond = Condition::try_from(shuffle_bits!(instruction { [26:24] => [2:0] })).unwrap();
+
+        let imm = shuffle_bits!(instruction {
+            sign [31] => [9],
+            [30:27] => [8:5],
+            [11:7] => [4:0],
+        });
+
+        let value = if self.state.flags.satisfy(cond) {
+            imm
+        } else {
+            self.get_reg(rs1)
+        };
+        self.set_reg(rd, value);
+    }
+
+    #[inline]
+    fn mem_32<Mem: MemoryInterface, Io: IoInterface>(
+        &mut self,
+        instruction: u32,
+        priv_level: PrivilegeLevel,
+        mem: &mut Mem,
+        io: &mut Io,
+    ) -> Result<(), ExceptionKind> {
+        let rb = Register::try_from(shuffle_bits!(instruction { [21:17] => [4:0] })).unwrap();
+
+        if (instruction & 0x40) == 0 {
+            let imm = shuffle_bits!(instruction {
+                sign [31] => [9],
+                [30:27] => [8:5],
+                [11:7] => [4:0],
+            });
+
+            let rd = Register::try_from(shuffle_bits!(instruction { [16:12] => [4:0] })).unwrap();
+
+            let addr = self.get_reg(rb).wrapping_add(imm);
+
+            match (instruction & 0x700_0000) >> 24 {
+                0b000 | 0b001 /* ld.32 */ => {
+                    let value = mem.read_32(addr, priv_level, false)?;
+                    self.set_reg(rd, value);
+                }
+                0b010 /* ld.8u */ => {
+                    let value = mem.read_8(addr, priv_level, false)?;
+                    self.set_reg(rd, value as u32)
+                }
+                0b011 /* ld.8s */ => {
+                    let value = mem.read_8(addr, priv_level, false)?;
+                    self.set_reg(rd, ((value as i8) as i32) as u32);
+                }
+                0b100 /* ld.16u */ => {
+                    let value = mem.read_16(addr, priv_level, false)?;
+                    self.set_reg(rd, value as u32);
+                }
+                0b101 /* ld.16s */ => {
+                    let value = mem.read_16(addr, priv_level, false)?;
+                    self.set_reg(rd, ((value as i16) as i32) as u32);
+                }
+                0b110 | 0b111 /* in */ => {
+                    let value = self.read_io(io, addr, priv_level)?;
+                    self.set_reg(rd, value);
+                }
+                _ => unreachable!(),
+            }
+        } else {
+            let imm = shuffle_bits!(instruction {
+                sign [31] => [9],
+                [30:27] => [8:5],
+                [16:12] => [4:0],
+            });
+
+            let rs = Register::try_from(shuffle_bits!(instruction { [11:8] => [3:0], [7] => [4] }))
+                .unwrap();
+
+            let addr = self.get_reg(rb).wrapping_add(imm);
+
+            match (instruction & 0x600_0000) >> 25 {
+                0b00 /* st.32 */ => {
+                    let value = self.get_reg(rs);
+                    mem.write_32(addr, value, priv_level, false)?;
+                }
+                0b01 /* st.8 */ => {
+                    let value = self.get_reg(rs) as u8;
+                    mem.write_8(addr, value, priv_level, false)?;
+                }
+                0b10 /* st.16 */ => {
+                    let value = self.get_reg(rs) as u16;
+                    mem.write_16(addr, value, priv_level, false)?;
+                }
+                0b11 /* out */ => {
+                    let value = self.get_reg(rs);
+                    self.write_io(io, addr, value, priv_level)?;
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        Ok(())
+    }
+
+    #[inline]
+    fn alu_32(&mut self, instruction: u32) {
+        let rs1 = Register::try_from(shuffle_bits!(instruction { [21:17] => [4:0] })).unwrap();
+        let rd = Register::try_from(shuffle_bits!(instruction { [16:12] => [4:0] })).unwrap();
+        let rs2 =
+            Register::try_from(shuffle_bits!(instruction { [11:8] => [3:0], [7] => [4] })).unwrap();
+
+        let lhs = self.get_reg(rs1);
+        let rhs = self.get_reg(rs2);
+        let result = match (instruction & 0x700_0000) >> 24 {
+            0b000 /* add */ => self.execute_add(lhs, rhs, false),
+            0b001 /* sub */ => self.execute_add(lhs, !rhs, true),
+            0b010 /* and */ => lhs & rhs,
+            0b011 /* or */ => lhs | rhs,
+            0b100 /* xor */ => lhs ^ rhs,
+            0b101 /* shl */ => lhs << (rhs & 0x1F),
+            0b110 /* lsr */ => lhs >> (rhs & 0x1F),
+            0b111 /* asr */ => lhs.ashr(rhs & 0x1F),
+            _ => unreachable!(),
+        };
+
+        self.set_reg(rd, result);
+        self.state.flags.set(Flags::ZERO, result == 0);
+    }
+
+    #[inline]
+    fn mov_32(&mut self, instruction: u32) {
+        let rs1 = Register::try_from(shuffle_bits!(instruction { [21:17] => [4:0] })).unwrap();
+        let rd = Register::try_from(shuffle_bits!(instruction { [16:12] => [4:0] })).unwrap();
+        let rs2 =
+            Register::try_from(shuffle_bits!(instruction { [11:8] => [3:0], [7] => [4] })).unwrap();
+        let cond = Condition::try_from(shuffle_bits!(instruction { [26:24] => [2:0] })).unwrap();
+
+        let value = if self.state.flags.satisfy(cond) {
+            self.get_reg(rs2)
+        } else {
+            self.get_reg(rs1)
+        };
+        self.set_reg(rd, value);
+    }
+
+    #[inline]
+    fn aluc_32(&mut self, instruction: u32) -> Result<(), ExceptionKind> {
+        let rs1 = Register::try_from(shuffle_bits!(instruction { [21:17] => [4:0] })).unwrap();
+        let rd = Register::try_from(shuffle_bits!(instruction { [16:12] => [4:0] })).unwrap();
+        let rs2 =
+            Register::try_from(shuffle_bits!(instruction { [11:8] => [3:0], [7] => [4] })).unwrap();
+
+        let lhs = self.get_reg(rs1);
+        let rhs = self.get_reg(rs2);
+        let c_in = self.state.flags.contains(Flags::CARRY);
+        let result = match (instruction & 0x700_0000) >> 24 {
+            0b000 /* addc */ => self.execute_add(lhs, rhs, c_in),
+            0b001 /* subc */ => self.execute_add(lhs, !rhs, c_in),
+            0b010..=0b111 => return Err(ExceptionKind::IllegalInstruction),
+            _ => unreachable!(),
+        };
+
+        self.set_reg(rd, result);
+        if result != 0 {
+            self.state.flags.remove(Flags::ZERO);
+        }
+
+        Ok(())
+    }
+
+    #[inline]
+    fn mul_32(&mut self, instruction: u32) {
+        let rs1 = Register::try_from(shuffle_bits!(instruction { [21:17] => [4:0] })).unwrap();
+        let rd = Register::try_from(shuffle_bits!(instruction { [16:12] => [4:0] })).unwrap();
+        let rs2 =
+            Register::try_from(shuffle_bits!(instruction { [11:8] => [3:0], [7] => [4] })).unwrap();
+
+        let lhs = self.get_reg(rs1);
+        let rhs = self.get_reg(rs2);
+        let result = match (instruction & 0x700_0000) >> 24 {
+            0b000 /* mul */ => {
+                let result = u32::wrapping_mul(lhs, rhs);
+                self.state.flags.set(Flags::ZERO, result == 0);
+                result
+            }
+            0b001 /* mulhuu */ => {
+                let result = (u64::wrapping_mul(lhs as u64, rhs as u64) >> 32) as u32;
+                if result != 0 {
+                    self.state.flags.remove(Flags::ZERO);
+                }
+                result
+            }
+            0b010 /* mulhss */ => {
+                let result = (i64::wrapping_mul((lhs as i32) as i64, (rhs as i32) as i64) >> 32) as u32;
+                if result != 0 {
+                    self.state.flags.remove(Flags::ZERO);
+                }
+                result
+            }
+            0b011 /* mulhus */ => {
+                let result = (i64::wrapping_mul((lhs as u64) as i64, (rhs as i32) as i64) >> 32) as u32;
+                if result != 0 {
+                    self.state.flags.remove(Flags::ZERO);
+                }
+                result
+            }
+            0b100 /* divu */ => {
+                if rhs == 0 { u32::MAX } else { u32::wrapping_div(lhs, rhs) }
+            }
+            0b101 /* divs */ => {
+                if rhs == 0 {
+                    if (lhs as i32) < 0 { i32::MIN as u32 } else { i32::MAX as u32 }
+                } else {
+                    i32::wrapping_div(lhs as i32, rhs as i32) as u32
+                }
+            }
+            0b110 /* remu */ => {
+                if rhs == 0 { 0 } else { u32::wrapping_rem(lhs, rhs) }
+            }
+            0b111 /* rems */ => {
+                if rhs == 0 { 0 } else { i32::wrapping_rem(lhs as i32, rhs as i32) as u32 }
+            }
+            _ => unreachable!(),
+        };
+
+        self.set_reg(rd, result);
+    }
+
+    #[inline]
+    fn fpu3_32(&mut self, instruction: u32) -> Result<(), ExceptionKind> {
+        let rs1 = Register::try_from(shuffle_bits!(instruction { [21:17] => [4:0] })).unwrap();
+        let rd = Register::try_from(shuffle_bits!(instruction { [16:12] => [4:0] })).unwrap();
+        let rs2 =
+            Register::try_from(shuffle_bits!(instruction { [11:8] => [3:0], [7] => [4] })).unwrap();
+
+        let lhs = f32::from_bits(self.get_reg(rs1));
+        let rhs = f32::from_bits(self.get_reg(rs2));
+        let result = match (instruction & 0x700_0000) >> 24 {
+            0b000 /* fadd */ => lhs + rhs,
+            0b001 /* fsub */ => lhs - rhs,
+            0b010 /* fmul */ => lhs * rhs,
+            0b011 /* fdiv */ => lhs / rhs,
+            0b100 /* frem */ => lhs % rhs,
+            0b101 => return Err(ExceptionKind::IllegalInstruction),
+            0b110 /* fmin */ => lhs.min(rhs),
+            0b111 /* fmax */ => lhs.max(rhs),
+            _ => unreachable!(),
+        };
+
+        self.set_reg(rd, result.to_bits());
+
+        Ok(())
+    }
+
+    #[inline]
+    fn fpu2_32(&mut self, instruction: u32) -> Result<(), ExceptionKind> {
+        let rs = Register::try_from(shuffle_bits!(instruction { [21:17] => [4:0] })).unwrap();
+        let rd = Register::try_from(shuffle_bits!(instruction { [16:12] => [4:0] })).unwrap();
+
+        let value = f32::from_bits(self.get_reg(rs));
+        let result = match (instruction & 0x700_0000) >> 24 {
+            0b000 /* ffloor */ => value.floor(),
+            0b001 /* fceil */ => value.ceil(),
+            0b010 /* fround */ => value.round(),
+            0b011 /* ffract */ => value.fract(),
+            0b100 /* fabs */ => value.abs(),
+            0b101 /* fneg */ => -value,
+            0b110 /* fsqrt */ => value.sqrt(),
+            0b111 => return Err(ExceptionKind::IllegalInstruction),
+            _ => unreachable!(),
+        };
+
+        self.set_reg(rd, result.to_bits());
+
+        Ok(())
+    }
+
+    #[inline]
+    fn fcmp_32(&mut self, instruction: u32) {
+        let rs1 = Register::try_from(shuffle_bits!(instruction { [21:17] => [4:0] })).unwrap();
+        let rd = Register::try_from(shuffle_bits!(instruction { [16:12] => [4:0] })).unwrap();
+        let rs2 =
+            Register::try_from(shuffle_bits!(instruction { [11:8] => [3:0], [7] => [4] })).unwrap();
+
+        let lhs = f32::from_bits(self.get_reg(rs1));
+        let rhs = f32::from_bits(self.get_reg(rs2));
+        let result = match (instruction & 0x300_0000) >> 24 {
+            0b00 /* eq */ => lhs == rhs,
+            0b01 /* ne */ => lhs != rhs,
+            0b10 /* lt */ => lhs < rhs,
+            0b11 /* ge */ => lhs >= rhs,
+            _ => unreachable!(),
+        };
+
+        self.set_reg(rd, result as u32);
+    }
+
+    #[inline]
+    fn cvt_32(&mut self, instruction: u32) -> Result<(), ExceptionKind> {
+        let rs = Register::try_from(shuffle_bits!(instruction { [21:17] => [4:0] })).unwrap();
+        let rd = Register::try_from(shuffle_bits!(instruction { [16:12] => [4:0] })).unwrap();
+
+        let value = self.get_reg(rs);
+        match (instruction & 0x700_0000) >> 24 {
+            0b000 /* ftoi */ => {
+                let result = f32::from_bits(value) as u32;
+                self.set_reg(rd, result);
+            }
+            0b001 /* itof */ => {
+                let result = value as f32;
+                self.set_reg(rd, result.to_bits());
+            }
+            0b010..=0b111 => {
+                return Err(ExceptionKind::IllegalInstruction);
+            }
+            _ => unreachable!(),
+        }
+
+        Ok(())
+    }
+
+    #[inline]
+    fn ldr_32<Mem: MemoryInterface>(
+        &mut self,
+        instruction: u32,
+        priv_level: PrivilegeLevel,
+        mem: &mut Mem,
+    ) -> Result<(), ExceptionKind> {
+        let rb = Register::try_from(shuffle_bits!(instruction { [21:17] => [4:0] })).unwrap();
+        let rd = Register::try_from(shuffle_bits!(instruction { [16:12] => [4:0] })).unwrap();
+
+        let addr = self.get_reg(rb);
+        match (instruction & 0x700_0000) >> 24 {
+            0b000 | 0b001 /* ldr.32 */ => {
+                let value = mem.read_32(addr, priv_level, true)?;
+                self.set_reg(rd, value);
+            }
+            0b010 /* ldr.8u */ => {
+                let value = mem.read_8(addr, priv_level, true)?;
+                self.set_reg(rd, value as u32);
+            }
+            0b011 /* ldr.8s */ => {
+                let value = mem.read_8(addr, priv_level, true)?;
+                self.set_reg(rd, ((value as i8) as i32) as u32);
+            }
+            0b100 /* ldr.16u */ => {
+                let value = mem.read_16(addr, priv_level, true)?;
+                self.set_reg(rd, value as u32);
+            }
+            0b101 /* ldr.16s */ => {
+                let value = mem.read_16(addr, priv_level, true)?;
+                self.set_reg(rd, ((value as i16) as i32) as u32);
+            }
+            0b110 | 0b111 => {
+                return Err(ExceptionKind::IllegalInstruction);
+            }
+            _ => unreachable!(),
+        }
+
+        Ok(())
+    }
+
+    #[inline]
+    fn stc_32<Mem: MemoryInterface>(
+        &mut self,
+        instruction: u32,
+        priv_level: PrivilegeLevel,
+        mem: &mut Mem,
+    ) -> Result<(), ExceptionKind> {
+        let rb = Register::try_from(shuffle_bits!(instruction { [21:17] => [4:0] })).unwrap();
+        let rd = Register::try_from(shuffle_bits!(instruction { [16:12] => [4:0] })).unwrap();
+        let rs =
+            Register::try_from(shuffle_bits!(instruction { [11:8] => [3:0], [7] => [4] })).unwrap();
+
+        let addr = self.get_reg(rb);
+        let result = match (instruction & 0x600_0000) >> 25 {
+            0b00 /* stc.32 */ => {
+                let value = self.get_reg(rs);
+                mem.write_32(addr, value, priv_level, true)?
+            }
+            0b01 /* stc.8 */ => {
+                let value = self.get_reg(rs) as u8;
+                mem.write_8(addr, value, priv_level, true)?
+            }
+            0b10 /* stc.16 */ => {
+                let value = self.get_reg(rs) as u16;
+                mem.write_16(addr, value, priv_level, true)?
+            }
+            0b11 => {
+                return Err(ExceptionKind::IllegalInstruction);
+            }
+            _ => unreachable!(),
+        };
+        self.set_reg(rd, result as u32);
+
+        Ok(())
+    }
+
+    #[inline]
     fn step_inner<Mem: MemoryInterface, Io: IoInterface>(
         &mut self,
         mem: &mut Mem,
@@ -363,264 +1044,38 @@ impl Cpu {
         // https://docs.google.com/spreadsheets/d/1VGV9Hp17HtE5oG_ltB0xSQ0j2AvfDYW9LLvOI28e6qM/edit?usp=sharing
 
         if (instruction & 0x1) == 0 {
-            // ldi, addi
-
-            let rd_rs1 =
-                Register::try_from(shuffle_bits!(instruction { [15:12] => [3:0] })).unwrap();
-
-            let imm = shuffle_bits!(instruction {
-                [11:7] => [4:0],
-                [6:4] => [8:6],
-                sign [3] => [9],
-                [2] => [5],
-            });
-
-            if (instruction & 0x2) == 0 {
-                self.set_reg(rd_rs1, imm);
-            } else {
-                let sum = self.execute_add(self.get_reg(rd_rs1), imm, false);
-                self.state.flags.set(Flags::ZERO, sum == 0);
-                self.set_reg(rd_rs1, sum);
-            }
+            self.ldi_addi_16(instruction);
         } else if (instruction & 0x2) == 0 {
-            // j, jl
-
-            let rb = Register::try_from(shuffle_bits!(instruction { [15:12] => [3:0] })).unwrap();
-
-            let imm = shuffle_bits!(instruction {
-                [11:8] => [4:1],
-                [7] => [5],
-                [6:4] => [8:6],
-                sign [3] => [9],
-            });
-
-            let jump_addr = self.get_reg(rb).wrapping_add(imm) & !0x1;
-            if (instruction & 0x4) != 0 {
-                self.set_reg(Register::Ra, self.program_counter);
-            }
-            self.program_counter = jump_addr;
+            self.jump_16(instruction);
         } else if (instruction & 0x4) == 0 {
             if (instruction & 0x80) == 0 {
-                // br, jr, jrl
-
-                let cond =
-                    BranchCondition::try_from(shuffle_bits!(instruction { [14:12] => [2:0] }))
-                        .unwrap();
-
-                let imm = shuffle_bits!(instruction {
-                    [15] => [5],
-                    [11:8] => [4:1],
-                    [6:4] => [8:6],
-                    sign [3] => [9],
-                });
-
-                if cond == BranchCondition::Link {
-                    self.set_reg(Register::Ra, self.program_counter);
-                }
-
-                if self.state.flags.satisfy_branch(cond) {
-                    self.program_counter = self.program_counter.wrapping_add(imm) & !0x1;
-                }
+                self.branch_16(instruction);
             } else {
                 let upper_inst = mem.read_16(self.program_counter, priv_level, false)?;
 
                 let instruction = instruction | ((upper_inst as u32) << 16);
                 self.program_counter = self.program_counter.wrapping_add(2);
 
-                // ldui, apcui
-
-                let rd =
-                    Register::try_from(shuffle_bits!(instruction { [16:12] => [4:0] })).unwrap();
-
-                let imm = shuffle_bits!(instruction {
-                    sign [31] => [31],
-                    [30:27] => [30:27],
-                    [26:24] => [12:10],
-                    [23:22] => [14:13],
-                    [21:17] => [19:15],
-                    [11:8] => [26:23],
-                    [6:4] => [22:20],
-                });
-
-                if (instruction & 0x8) == 0 {
-                    self.set_reg(rd, imm);
-                } else {
-                    self.set_reg(rd, self.program_counter.wrapping_add(imm));
-                }
+                self.uimm_32(instruction);
             }
         } else {
             match (instruction & 0x18) >> 3 {
-                0b00 => {
-                    // alu
-
-                    let rd_rs1 =
-                        Register::try_from(shuffle_bits!(instruction { [15:12] => [3:0] }))
-                            .unwrap();
-                    let rs2 =
-                        Register::try_from(shuffle_bits!(instruction { [11:8] => [3:0] })).unwrap();
-
-                    let lhs = self.get_reg(rd_rs1);
-                    let rhs = self.get_reg(rs2);
-                    let result = match (instruction & 0xE0) >> 5 {
-                        0b000 /* add */ => {
-                            self.execute_add(lhs, rhs, false)
-                        }
-                        0b001 /* sub */ => {
-                            self.execute_add(lhs, !rhs, true)
-                        }
-                        0b010 /* and */ => {
-                            lhs & rhs
-                        }
-                        0b011 /* or */ => {
-                            lhs | rhs
-                        }
-                        0b100 /* xor */ => {
-                            lhs ^ rhs
-                        }
-                        0b101 /* shl */ => {
-                            lhs << (rhs & 0x1F)
-                        }
-                        0b110 /* lsr */ => {
-                            lhs >> (rhs & 0x1F)
-                        }
-                        0b111 /* asr */ => {
-                            lhs.ashr(rhs & 0x1F)
-                        }
-                        _ => unreachable!(),
-                    };
-
-                    self.set_reg(rd_rs1, result);
-                    self.state.flags.set(Flags::ZERO, result == 0);
-                }
-                0b01 => {
-                    // mov
-
-                    let rd_rs1 =
-                        Register::try_from(shuffle_bits!(instruction { [15:12] => [3:0] }))
-                            .unwrap();
-                    let rs2 =
-                        Register::try_from(shuffle_bits!(instruction { [11:8] => [3:0] })).unwrap();
-                    let cond =
-                        Condition::try_from(shuffle_bits!(instruction { [7:5] => [2:0] })).unwrap();
-
-                    if self.state.flags.satisfy(cond) {
-                        let value = self.get_reg(rs2);
-                        self.set_reg(rd_rs1, value);
-                    };
-                }
+                0b00 => self.alu_16(instruction),
+                0b01 => self.mov_16(instruction),
                 0b10 => {
                     if (instruction & 0x60) == 0 {
                         if (instruction & 0x80) == 0 {
-                            // cmp
-
-                            let rs1 =
-                                Register::try_from(shuffle_bits!(instruction { [15:12] => [3:0] }))
-                                    .unwrap();
-                            let rs2 =
-                                Register::try_from(shuffle_bits!(instruction { [11:8] => [3:0] }))
-                                    .unwrap();
-
-                            let lhs = self.get_reg(rs1);
-                            let rhs = self.get_reg(rs2);
-                            let result = self.execute_add(lhs, !rhs, true);
-                            self.state.flags.set(Flags::ZERO, result == 0);
+                            self.cmp_16(instruction);
                         } else {
-                            match (instruction & 0xF00) >> 8 {
-                                0b0000 => {
-                                    // ret
-
-                                    self.program_counter = self.get_reg(Register::Ra) & !0x1;
-                                }
-                                0b0001 => {
-                                    // sysret
-
-                                    match self.interrupt_state {
-                                        InterruptState::Servicing => {
-                                            self.leave_interrupt();
-                                        }
-                                        InterruptState::Listening => {
-                                            return Err(ExceptionKind::IllegalInstruction);
-                                        }
-                                    }
-                                }
-                                0b0010 => {
-                                    // fence
-                                }
-                                0b0011 => {
-                                    // ifence
-                                }
-                                0b0100..=0b1101 => {
-                                    return Err(ExceptionKind::IllegalInstruction);
-                                }
-                                0b1110 => {
-                                    // envcall
-
-                                    let code = shuffle_bits!(instruction { [15:12] => [3:0] });
-                                    return Ok(Some(code as u8));
-                                }
-                                0b1111 => {
-                                    // syscall
-
-                                    match self.interrupt_state {
-                                        InterruptState::Servicing => {
-                                            panic!("software interrupt inside interrupt handler")
-                                        }
-                                        InterruptState::Listening => {
-                                            let slot = shuffle_bits!(instruction { [15:12] => [3:0] })
-                                                as usize;
-                                            self.enter_interrupt(
-                                                self.software_interrupt_table[slot],
-                                            );
-                                        }
-                                    }
-                                }
-                                _ => unreachable!(),
-                            }
+                            return self.sys_16(instruction);
                         }
                     } else {
-                        // shli, lsri, asri
-
-                        let rd_rs1 =
-                            Register::try_from(shuffle_bits!(instruction { [15:12] => [3:0] }))
-                                .unwrap();
-
-                        let imm = shuffle_bits!(instruction {
-                            [11:7] => [4:0],
-                        });
-
-                        let lhs = self.get_reg(rd_rs1);
-                        let result = match (instruction & 0x60) >> 5 {
-                            0b01 /* shli */ => lhs << imm,
-                            0b10 /* lsri */ => lhs >> imm,
-                            0b11 /* asri */ => lhs.ashr(imm),
-                            _ => unreachable!(),
-                        };
-
-                        self.set_reg(rd_rs1, result);
-                        self.state.flags.set(Flags::ZERO, result == 0);
+                        self.alui_16(instruction);
                     }
                 }
                 0b11 => {
                     if (instruction & 0x20) == 0 {
-                        // ld.32 [sp], st.32 [sp]
-
-                        let rd_rs =
-                            Register::try_from(shuffle_bits!(instruction { [15:12] => [3:0] }))
-                                .unwrap();
-
-                        let imm = shuffle_bits!(instruction {
-                            [11:9] => [4:2],
-                            [8:7] => [6:5],
-                        });
-
-                        let addr = self.get_reg(Register::Sp).wrapping_add(imm);
-                        if (instruction & 0x40) == 0 {
-                            let value = mem.read_32(addr, priv_level, false)?;
-                            self.set_reg(rd_rs, value);
-                        } else {
-                            let value = self.get_reg(rd_rs);
-                            mem.write_32(addr, value, priv_level, false)?;
-                        }
+                        self.mem_16(instruction, priv_level, mem)?;
                     } else {
                         let upper_inst = mem.read_16(self.program_counter, priv_level, false)?;
 
@@ -630,529 +1085,34 @@ impl Cpu {
                         match (instruction & 0xC0_0000) >> 22 {
                             0b00 => {
                                 if (instruction & 0x40) == 0 {
-                                    // jl
-
-                                    let rd = Register::try_from(
-                                        shuffle_bits!(instruction { [16:12] => [4:0] }),
-                                    )
-                                    .unwrap();
-                                    let rb = Register::try_from(
-                                        shuffle_bits!(instruction { [21:17] => [4:0] }),
-                                    )
-                                    .unwrap();
-
-                                    let imm = shuffle_bits!(instruction {
-                                        sign [31] => [13],
-                                        [30:27] => [8:5],
-                                        [26:24] => [12:10],
-                                        [11:8] => [4:1],
-                                        [7] => [9],
-                                    });
-
-                                    let jump_addr = self.get_reg(rb).wrapping_add(imm) & !0x1;
-                                    self.set_reg(rd, self.program_counter);
-                                    self.program_counter = jump_addr;
+                                    self.jump_32(instruction);
                                 } else {
-                                    // br, jr, jrl
-
-                                    let cond = BranchCondition::try_from(
-                                        shuffle_bits!(instruction { [14:12] => [2:0] }),
-                                    )
-                                    .unwrap();
-
-                                    let imm = shuffle_bits!(instruction {
-                                        sign [31] => [20],
-                                        [30:27] => [8:5],
-                                        [26:24] => [12:10],
-                                        [21:15] => [19:13],
-                                        [11:8] => [4:1],
-                                        [7] => [9],
-                                    });
-
-                                    if cond == BranchCondition::Link {
-                                        self.set_reg(Register::Ra, self.program_counter);
-                                    }
-
-                                    if self.state.flags.satisfy_branch(cond) {
-                                        self.program_counter =
-                                            self.program_counter.wrapping_add(imm) & !0x1;
-                                    }
+                                    self.branch_32(instruction);
                                 }
                             }
                             0b01 => {
-                                let rd = Register::try_from(
-                                    shuffle_bits!(instruction { [16:12] => [4:0] }),
-                                )
-                                .unwrap();
-                                let rs1 = Register::try_from(
-                                    shuffle_bits!(instruction { [21:17] => [4:0] }),
-                                )
-                                .unwrap();
-
-                                let imm = shuffle_bits!(instruction {
-                                    sign [31] => [9],
-                                    [30:27] => [8:5],
-                                    [11:7] => [4:0],
-                                });
-
                                 if (instruction & 0x40) == 0 {
-                                    // alui
-
-                                    let lhs = self.get_reg(rs1);
-                                    let result = match (instruction & 0x700_0000) >> 24 {
-                                        0b000 /* addi */ => {
-                                            self.execute_add(lhs, imm, false)
-                                        }
-                                        0b001 /* subi */ => {
-                                            self.execute_add(lhs, !imm, true)
-                                        }
-                                        0b010 /* andi */ => {
-                                            lhs & imm
-                                        }
-                                        0b011 /* ori */ => {
-                                            lhs | imm
-                                        }
-                                        0b100 /* xori */ => {
-                                            lhs ^ imm
-                                        }
-                                        0b101 /* shli */ => {
-                                            lhs << (imm & 0x1F)
-                                        }
-                                        0b110 /* lsri */ => {
-                                            lhs >> (imm & 0x1F)
-                                        }
-                                        0b111 /* asri */ => {
-                                            lhs.ashr(imm & 0x1F)
-                                        }
-                                        _ => unreachable!(),
-                                    };
-
-                                    self.set_reg(rd, result);
-                                    self.state.flags.set(Flags::ZERO, result == 0);
+                                    self.alui_32(instruction);
                                 } else {
-                                    // movi
-
-                                    let cond = Condition::try_from(
-                                        shuffle_bits!(instruction { [26:24] => [2:0] }),
-                                    )
-                                    .unwrap();
-
-                                    let value = if self.state.flags.satisfy(cond) {
-                                        imm
-                                    } else {
-                                        self.get_reg(rs1)
-                                    };
-                                    self.set_reg(rd, value);
+                                    self.movi_32(instruction);
                                 }
                             }
-                            0b10 => {
-                                let rb = Register::try_from(
-                                    shuffle_bits!(instruction { [21:17] => [4:0] }),
-                                )
-                                .unwrap();
-
-                                if (instruction & 0x40) == 0 {
-                                    // ld, in
-
-                                    let imm = shuffle_bits!(instruction {
-                                        sign [31] => [9],
-                                        [30:27] => [8:5],
-                                        [11:7] => [4:0],
-                                    });
-
-                                    let rd = Register::try_from(
-                                        shuffle_bits!(instruction { [16:12] => [4:0] }),
-                                    )
-                                    .unwrap();
-
-                                    let addr = self.get_reg(rb).wrapping_add(imm);
-
-                                    match (instruction & 0x700_0000) >> 24 {
-                                        0b000 | 0b001 /* ld.32 */ => {
-                                            let value = mem.read_32(addr, priv_level, false)?;
-                                            self.set_reg(rd, value);
-                                        }
-                                        0b010 /* ld.8u */ => {
-                                            let value = mem.read_8(addr, priv_level, false)?;
-                                            self.set_reg(rd, value as u32)
-                                        }
-                                        0b011 /* ld.8s */ => {
-                                            let value = mem.read_8(addr, priv_level, false)?;
-                                            self.set_reg(rd, ((value as i8) as i32) as u32);
-                                        }
-                                        0b100 /* ld.16u */ => {
-                                            let value = mem.read_16(addr, priv_level, false)?;
-                                            self.set_reg(rd, value as u32);
-                                        }
-                                        0b101 /* ld.16s */ => {
-                                            let value = mem.read_16(addr, priv_level, false)?;
-                                            self.set_reg(rd, ((value as i16) as i32) as u32);
-                                        }
-                                        0b110 | 0b111 /* in */ => {
-                                            let value = self.read_io(io, addr, priv_level)?;
-                                            self.set_reg(rd, value);
-                                        }
-                                        _ => unreachable!(),
-                                    }
-                                } else {
-                                    // st, out
-
-                                    let imm = shuffle_bits!(instruction {
-                                        sign [31] => [9],
-                                        [30:27] => [8:5],
-                                        [16:12] => [4:0],
-                                    });
-
-                                    let rs = Register::try_from(
-                                        shuffle_bits!(instruction { [11:8] => [3:0], [7] => [4] }),
-                                    )
-                                    .unwrap();
-
-                                    let addr = self.get_reg(rb).wrapping_add(imm);
-
-                                    match (instruction & 0x600_0000) >> 25 {
-                                        0b00 /* st.32 */ => {
-                                            let value = self.get_reg(rs);
-                                            mem.write_32(addr, value, priv_level, false)?;
-                                        }
-                                        0b01 /* st.8 */ => {
-                                            let value = self.get_reg(rs) as u8;
-                                            mem.write_8(addr, value, priv_level, false)?;
-                                        }
-                                        0b10 /* st.16 */ => {
-                                            let value = self.get_reg(rs) as u16;
-                                            mem.write_16(addr, value, priv_level, false)?;
-                                        }
-                                        0b11 /* out */ => {
-                                            let value = self.get_reg(rs);
-                                            self.write_io(io, addr, value, priv_level)?;
-                                        }
-                                        _ => unreachable!(),
-                                    }
-                                }
-                            }
+                            0b10 => self.mem_32(instruction, priv_level, mem, io)?,
                             0b11 => {
-                                let rs1_rb = Register::try_from(
-                                    shuffle_bits!(instruction { [21:17] => [4:0] }),
-                                )
-                                .unwrap();
-
-                                let rd = Register::try_from(
-                                    shuffle_bits!(instruction { [16:12] => [4:0] }),
-                                )
-                                .unwrap();
-
                                 match shuffle_bits!(instruction { [31:27] => [5:1], [6] => [0] }) {
-                                    0b000000 /* alu */ => {
-                                        let rs2 = Register::try_from(
-                                            shuffle_bits!(instruction { [11:8] => [3:0], [7] => [4] }),
-                                        )
-                                        .unwrap();
-
-                                        let lhs = self.get_reg(rs1_rb);
-                                        let rhs = self.get_reg(rs2);
-                                        let result = match (instruction & 0x700_0000) >> 24 {
-                                            0b000 /* add */ => {
-                                                self.execute_add(lhs, rhs, false)
-                                            }
-                                            0b001 /* sub */ => {
-                                                self.execute_add(lhs, !rhs, true)
-                                            }
-                                            0b010 /* and */ => {
-                                                lhs & rhs
-                                            }
-                                            0b011 /* or */ => {
-                                                lhs | rhs
-                                            }
-                                            0b100 /* xor */ => {
-                                                lhs ^ rhs
-                                            }
-                                            0b101 /* shl */ => {
-                                                lhs << (rhs & 0x1F)
-                                            }
-                                            0b110 /* lsr */ => {
-                                                lhs >> (rhs & 0x1F)
-                                            }
-                                            0b111 /* asr */ => {
-                                                lhs.ashr(rhs & 0x1F)
-                                            }
-                                            _ => unreachable!(),
-                                        };
-
-                                        self.set_reg(rd, result);
-                                        self.state.flags.set(Flags::ZERO, result == 0);
+                                    0b000000 => self.alu_32(instruction),
+                                    0b000001 => self.mov_32(instruction),
+                                    0b000010 => self.aluc_32(instruction)?,
+                                    0b000011 => self.mul_32(instruction),
+                                    0b000100 => self.fpu3_32(instruction)?,
+                                    0b000101 => self.fpu2_32(instruction)?,
+                                    0b000110 => self.fcmp_32(instruction),
+                                    0b000111 => self.cvt_32(instruction)?,
+                                    0b001000 | 0b001010 | 0b001100 | 0b001110 => {
+                                        self.ldr_32(instruction, priv_level, mem)?;
                                     }
-                                    0b000001 /* mov */ => {
-                                        let rs2 = Register::try_from(
-                                            shuffle_bits!(instruction { [11:8] => [3:0], [7] => [4] }),
-                                        )
-                                        .unwrap();
-
-                                        let cond = Condition::try_from(
-                                            shuffle_bits!(instruction { [26:24] => [2:0] }),
-                                        )
-                                        .unwrap();
-
-                                        let value = if self.state.flags.satisfy(cond) {
-                                            self.get_reg(rs2)
-                                        } else {
-                                            self.get_reg(rs1_rb)
-                                        };
-                                        self.set_reg(rd, value);
-                                    }
-                                    0b000010 /* carry */ => {
-                                        let rs2 = Register::try_from(
-                                            shuffle_bits!(instruction { [11:8] => [3:0], [7] => [4] }),
-                                        )
-                                        .unwrap();
-
-                                        let lhs = self.get_reg(rs1_rb);
-                                        let rhs = self.get_reg(rs2);
-                                        let c_in = self.state.flags.contains(Flags::CARRY);
-                                        let result = match (instruction & 0x700_0000) >> 24 {
-                                            0b000 /* addc */ => {
-                                                self.execute_add(lhs, rhs, c_in)
-                                            }
-                                            0b001 /* subc */ => {
-                                                self.execute_add(lhs, !rhs, c_in)
-                                            }
-                                            0b010..=0b111 => {
-                                                return Err(ExceptionKind::IllegalInstruction);
-                                            }
-                                            _ => unreachable!(),
-                                        };
-
-                                        self.set_reg(rd, result);
-                                        if result != 0 {
-                                            self.state.flags.remove(Flags::ZERO);
-                                        }
-                                    }
-                                    0b000011 /* mul, div */ => {
-                                        let rs2 = Register::try_from(
-                                            shuffle_bits!(instruction { [11:8] => [3:0], [7] => [4] }),
-                                        )
-                                        .unwrap();
-
-                                        let lhs = self.get_reg(rs1_rb);
-                                        let rhs = self.get_reg(rs2);
-                                        match (instruction & 0x700_0000) >> 24 {
-                                            0b000 /* mul */ => {
-                                                let result = u32::wrapping_mul(lhs, rhs);
-                                                self.set_reg(rd, result);
-                                                self.state.flags.set(Flags::ZERO, result == 0);
-                                            }
-                                            0b001 /* mulhuu */ => {
-                                                let result = (u64::wrapping_mul(lhs as u64, rhs as u64) >> 32) as u32;
-                                                self.set_reg(rd, result);
-                                                if result != 0 {
-                                                    self.state.flags.remove(Flags::ZERO);
-                                                }
-                                            }
-                                            0b010 /* mulhss */ => {
-                                                let result = (i64::wrapping_mul((lhs as i32) as i64, (rhs as i32) as i64) >> 32) as u32;
-                                                self.set_reg(rd, result);
-                                                if result != 0 {
-                                                    self.state.flags.remove(Flags::ZERO);
-                                                }
-                                            }
-                                            0b011 /* mulhus */ => {
-                                                let result = (i64::wrapping_mul((lhs as u64) as i64, (rhs as i32) as i64) >> 32) as u32;
-                                                self.set_reg(rd, result);
-                                                if result != 0 {
-                                                    self.state.flags.remove(Flags::ZERO);
-                                                }
-                                            }
-                                            0b100 /* divu */ => {
-                                                let result = if rhs == 0 { u32::MAX } else { u32::wrapping_div(lhs, rhs) };
-                                                self.set_reg(rd, result);
-                                            }
-                                            0b101 /* divs */ => {
-                                                let result = if rhs == 0 {
-                                                    if (lhs as i32) < 0 { i32::MIN } else { i32::MAX }
-                                                } else {
-                                                    i32::wrapping_div(lhs as i32, rhs as i32)
-                                                } as u32;
-                                                self.set_reg(rd, result);
-                                            }
-                                            0b110 /* remu */ => {
-                                                let result = if rhs == 0 { 0 } else { u32::wrapping_rem(lhs, rhs) };
-                                                self.set_reg(rd, result);
-                                            }
-                                            0b111 /* rems */ => {
-                                                let result = if rhs == 0 { 0 } else { i32::wrapping_rem(lhs as i32, rhs as i32) as u32 };
-                                                self.set_reg(rd, result);
-                                            }
-                                            _ => unreachable!(),
-                                        }
-                                    }
-                                    0b000100 /* fpu3 */ => {
-                                        let rs2 = Register::try_from(
-                                            shuffle_bits!(instruction { [11:8] => [3:0], [7] => [4] }),
-                                        )
-                                        .unwrap();
-
-                                        let lhs = f32::from_bits(self.get_reg(rs1_rb));
-                                        let rhs = f32::from_bits(self.get_reg(rs2));
-                                        let result = match (instruction & 0x700_0000) >> 24 {
-                                            0b000 /* fadd */ => {
-                                                lhs + rhs
-                                            }
-                                            0b001 /* fsub */ => {
-                                                lhs - rhs
-                                            }
-                                            0b010 /* fmul */ => {
-                                                lhs * rhs
-                                            }
-                                            0b011 /* fdiv */ => {
-                                                lhs / rhs
-                                            }
-                                            0b100 /* frem */ => {
-                                                lhs % rhs
-                                            }
-                                            0b101 => {
-                                                return Err(ExceptionKind::IllegalInstruction);
-                                            }
-                                            0b110 /* fmin */ => {
-                                                lhs.min(rhs)
-                                            }
-                                            0b111 /* fmax */ => {
-                                                lhs.max(rhs)
-                                            }
-                                            _ => unreachable!(),
-                                        };
-
-                                        self.set_reg(rd, result.to_bits());
-                                    }
-                                    0b000101 /* fpu2 */ => {
-                                        let value = f32::from_bits(self.get_reg(rs1_rb));
-                                        let result = match (instruction & 0x700_0000) >> 24 {
-                                            0b000 /* ffloor */ => {
-                                                value.floor()
-                                            }
-                                            0b001 /* fceil */ => {
-                                                value.ceil()
-                                            }
-                                            0b010 /* fround */ => {
-                                                value.round()
-                                            }
-                                            0b011 /* ffract */ => {
-                                                value.fract()
-                                            }
-                                            0b100 /* fabs */ => {
-                                                value.abs()
-                                            }
-                                            0b101 /* fneg */ => {
-                                                -value
-                                            }
-                                            0b110 /* fsqrt */ => {
-                                                value.sqrt()
-                                            }
-                                            0b111 => {
-                                                return Err(ExceptionKind::IllegalInstruction);
-                                            }
-                                            _ => unreachable!(),
-                                        };
-
-                                        self.set_reg(rd, result.to_bits());
-                                    }
-                                    0b000110 /* fcmp */ => {
-                                        let rs2 = Register::try_from(
-                                            shuffle_bits!(instruction { [11:8] => [3:0], [7] => [4] }),
-                                        )
-                                        .unwrap();
-
-                                        let lhs = f32::from_bits(self.get_reg(rs1_rb));
-                                        let rhs = f32::from_bits(self.get_reg(rs2));
-                                        let result = match (instruction & 0x300_0000) >> 24 {
-                                            0b00 /* eq */ => {
-                                                lhs == rhs
-                                            }
-                                            0b01 /* ne */ => {
-                                                lhs != rhs
-                                            }
-                                            0b10 /* lt */ => {
-                                                lhs < rhs
-                                            }
-                                            0b11 /* ge */ => {
-                                                lhs >= rhs
-                                            }
-                                            _ => unreachable!(),
-                                        };
-
-                                        self.set_reg(rd, result as u32);
-                                    }
-                                    0b000111 /* cvt */ => {
-                                        let value = self.get_reg(rs1_rb);
-                                        match (instruction & 0x700_0000) >> 24 {
-                                            0b000 /* ftoi */ => {
-                                                let result = f32::from_bits(value) as u32;
-                                                self.set_reg(rd, result);
-                                            }
-                                            0b001 /* itof */ => {
-                                                let result = value as f32;
-                                                self.set_reg(rd, result.to_bits());
-                                            }
-                                            0b010..=0b111 => {
-                                                return Err(ExceptionKind::IllegalInstruction);
-                                            }
-                                            _ => unreachable!(),
-                                        }
-                                    }
-                                    0b001000 | 0b001010 | 0b001100 | 0b001110 /* ldr */ => {
-                                        let addr = self.get_reg(rs1_rb);
-                                        match (instruction & 0x700_0000) >> 24 {
-                                            0b000 | 0b001 /* ldr.32 */ => {
-                                                let value = mem
-                                                .read_32(addr, priv_level, true)?;
-                                                self.set_reg(rd, value);},
-                                            0b010 /* ldr.8u */ => {
-                                                let value = mem
-                                                .read_8(addr, priv_level, true)?;
-                                                self.set_reg(rd, value as u32);},
-                                            0b011 /* ldr.8s */ => {
-                                                let value = mem.read_8(addr, priv_level, true)?;
-                                                self.set_reg(rd, ((value as i8) as i32) as u32);
-                                            },
-                                            0b100 /* ldr.16u */ => {
-                                                let value = mem
-                                                .read_16(addr, priv_level, true)?;
-                                                self.set_reg(rd, value as u32);},
-                                            0b101 /* ldr.16s */ => {
-                                                let value = mem.read_16(addr, priv_level, true)?;
-                                                self.set_reg(rd, ((value as i16) as i32) as u32);
-                                            },
-                                            0b110 | 0b111 => {
-                                                return Err(ExceptionKind::IllegalInstruction);
-                                            }
-                                            _ => unreachable!(),
-                                        }
-                                    }
-                                    0b001001 | 0b001011 | 0b001101 | 0b001111 /* stc */ => {
-                                        let rs = Register::try_from(
-                                            shuffle_bits!(instruction { [11:8] => [3:0], [7] => [4] }),
-                                        )
-                                        .unwrap();
-
-                                        let addr = self.get_reg(rs1_rb);
-                                        let result = match (instruction & 0x600_0000) >> 25 {
-                                            0b00 /* stc.32 */ => {
-                                                let value = self.get_reg(rs);
-                                                mem.write_32(addr, value, priv_level, true)?
-                                            }
-                                            0b01 /* stc.8 */ => {
-                                                let value = self.get_reg(rs) as u8;
-                                                mem.write_8(addr, value, priv_level, true)?
-                                            }
-                                            0b10 /* stc.16 */ => {
-                                                let value = self.get_reg(rs) as u16;
-                                                mem.write_16(addr, value, priv_level, true)?
-                                            }
-                                            0b11 => {
-                                                return Err(ExceptionKind::IllegalInstruction);
-                                            }
-                                            _ => unreachable!(),
-                                        };
-                                        self.set_reg(rd, result as u32);
+                                    0b001001 | 0b001011 | 0b001101 | 0b001111 => {
+                                        self.stc_32(instruction, priv_level, mem)?;
                                     }
                                     _ => return Err(ExceptionKind::IllegalInstruction),
                                 }
