@@ -1,281 +1,552 @@
 mod InstructionDecoder (
-    in sig instruction_word: bits<32>,
+    in sig instruction: bits<32>,
+    in sig instruction_16bit: bool,
+    in sig instruction_valid: bool,
 
-    out sig alu_op_out: AluOp,
-    out sig move_condition_out: Condition,
-    out sig jump_condition_out: Condition,
-    out sig load_flags_out: bit,
-    out sig reg_lhs_select_out: bits<5>,
-    out sig reg_rhs_select_out: bits<5>,
-    out sig reg_load_select_out: bits<5>,
-    out sig lhs_bus_source_out: LhsBusSource,
-    out sig rhs_bus_source_out: RhsBusSource,
-    out sig data_bus_source_out: DataBusSource,
-    out sig mem_enable_out: bit,
-    out sig mem_mode_out: MemoryMode,
-    out sig mem_sign_ext_out: bit,
-    out sig mem_write_out: bit,
-    out sig set_k_flag_out: bit,
-    out sig clear_k_flag_out: bit,
+    in sig stall: bool,
+    in sig hardware_interrupt: bool,
+    in sig hardware_interrupt_slot: bits<4>,
+    in sig current_interrupt_state: InterruptState,
 
-    out sig imm_out: bits<32>,
+    out sig decoded_instruction: DecodedInstruction,
+    out sig immediate: bits<32>,
 ) {
-    sig alu_op: AluOp;
+    const ILLEGAL_INSTRUCTION_SLOT = 0x0;
+    const ACCESS_VIOLATION_SLOT = 0x1;
+    const UNALIGNED_ACCESS_SLOT = 0x2;
+    const RESET_SLOT = 0xF;
+
+    sig nop: DecodedInstruction;
+    sig illegal_instruction: DecodedInstruction;
     comb {
-        alu_op = match instruction_word[3..7] {
+        nop = DecodedInstruction {
+            alu_op: AluOp::Nop,
+            move_condition: Condition::Never,
+            jump_condition: Condition::Never,
+            load_flags: false,
+            reg_lhs_select: REG_ZERO,
+            reg_rhs_select: REG_ZERO,
+            reg_load_select: REG_ZERO,
+            interrupt_kind: InterruptKind::Exception,
+            interrupt_slot: RESET_SLOT,
+            load_ira: false,
+            lhs_bus_source: LhsBusSource::Register,
+            rhs_bus_source: RhsBusSource::Register,
+            data_bus_source: DataBusSource::Execute,
+            set_interrupt_state: false,
+            new_interrupt_state: InterruptState::Servicing,
+            mem_enable: false,
+            mem_mode: match instruction[25..=26] {
+                0x0 => MemoryMode::Bits32,
+                0x1 => MemoryMode::Bits8,
+                0x2 => MemoryMode::Bits16,
+                0x3 => MemoryMode::IO,
+            },
+            mem_sign_ext: instruction[24],
+            mem_write: instruction[6],
+            mem_reserve: false,
+        };
+
+        illegal_instruction = nop;
+        illegal_instruction.jump_condition = Condition::Always;
+        illegal_instruction.interrupt_slot = match current_interrupt_state {
+            InterruptState::Servicing => RESET_SLOT, // illegal instructions inside interrupt handlers cause a system reset
+            InterruptState::Listening => ILLEGAL_INSTRUCTION_SLOT,
+        };
+        illegal_instruction.load_ira = true;
+        illegal_instruction.lhs_bus_source = LhsBusSource::Interrupt;
+        illegal_instruction.set_interrupt_state = true;
+        illegal_instruction.new_interrupt_state = InterruptState::Servicing;
+    }
+
+    sig branch_cond: Condition;
+    comb {
+        branch_cond = match instruction[12..=14] {
+            0x0 => Condition::Equal,
+            0x1 => Condition::NotEqual,
+            0x2 => Condition::UnsignedLessThan,
+            0x3 => Condition::UnsignedGreaterOrEqual,
+            0x4 => Condition::SignedLessThan,
+            0x5 => Condition::SignedGreaterOrEqual,
+            0x6 => Condition::Always,
+            0x7 => Condition::Always,
+        };
+    }
+
+    sig alu_op_16: AluOp;
+    comb {
+        alu_op_16 = match instruction[5..=7] {
             0x0 => AluOp::Add,
-            0x1 => AluOp::AddC,
-            0x2 => AluOp::Sub,
-            0x3 => AluOp::SubB,
-            0x4 => AluOp::And,
-            0x5 => AluOp::Or,
-            0x6 => AluOp::Xor,
-            0x7 => AluOp::Shl,
-            0x8 => AluOp::Lsr,
-            0x9 => AluOp::Asr,
-            0xA => AluOp::Mul,
-            0xB => AluOp::MulHuu,
-            0xC => AluOp::MulHss,
-            0xD => AluOp::MulHus,
-            0xE => AluOp::Cond,
-            0xF => AluOp::Nop,
+            0x1 => AluOp::Sub,
+            0x2 => AluOp::And,
+            0x3 => AluOp::Or,
+            0x4 => AluOp::Xor,
+            0x5 => AluOp::Shl,
+            0x6 => AluOp::Lsr,
+            0x7 => AluOp::Asr,
         };
     }
 
-    sig condition: Condition;
+    sig alui_op_16: AluOp;
     comb {
-        condition = match instruction_word[3..7] {
-            0x0 => Condition::Never,
-            0x1 => Condition::Carry,
-            0x2 => Condition::Zero,
-            0x3 => Condition::Signed,
-            0x4 => Condition::Overflow,
-            0x5 => Condition::NotCarry,
-            0x6 => Condition::NotZero,
-            0x7 => Condition::NotSigned,
-            0x8 => Condition::NotOverflow,
-            0x9 => Condition::UnsignedLessEqual,
-            0xA => Condition::UnsignedGreater,
-            0xB => Condition::SignedLess,
-            0xC => Condition::SignedGreaterEqual,
-            0xD => Condition::SignedLessEqual,
-            0xE => Condition::SignedGreater,
-            0xF => Condition::Always,
+        alui_op_16 = match instruction[5..=6] {
+            0x0 => AluOp::Xor,
+            0x1 => AluOp::Shl,
+            0x2 => AluOp::Lsr,
+            0x3 => AluOp::Asr,
         };
     }
 
-    sig mem_mode: MemoryMode;
+    sig move_cond_16: Condition;
     comb {
-        mem_mode = match instruction_word[3..5] {
-            0b00 => MemoryMode::Bits32,
-            0b01 => MemoryMode::Bits8,
-            0b10 => MemoryMode::Bits16,
-            0b11 => MemoryMode::IO,
+        move_cond_16 = match instruction[5..=7] {
+            0x0 => Condition::Equal,
+            0x1 => Condition::NotEqual,
+            0x2 => Condition::UnsignedLessThan,
+            0x3 => Condition::UnsignedGreaterOrEqual,
+            0x4 => Condition::SignedLessThan,
+            0x5 => Condition::SignedGreaterOrEqual,
+            0x6 => Condition::Always,
+            0x7 => Condition::Never,
         };
     }
 
-    sig op_code: OpCode;
+    sig alu_op_32: AluOp;
     comb {
-        op_code = match instruction_word[0..3] {
-            0b000 => {
-                match instruction_word[6] {
-                    0b0 => OpCode::Nop,
-                    0b1 => OpCode::System,
-                }
-            },
-            0b001 => {
-                if alu_op == AluOp::Nop {
-                    OpCode::Nop
-                } else {
-                    OpCode::AluRegReg
-                }
-            },
-            0b010 => {
-                if alu_op == AluOp::Nop {
-                    OpCode::Nop
-                } else {
-                    OpCode::AluRegImm
-                }
-            },
-            0b011 => {
-                match instruction_word[6] {
-                    0b0 => OpCode::Load,
-                    0b1 => OpCode::Store,
-                }
-            },
-            0b100 => {
-                match instruction_word[6] {
-                    0b0 => OpCode::Jump,
-                    0b1 => OpCode::UI,
-                }
-            },
-            0b101 => OpCode::Branch,
-            0b110 => {
-                if condition == Condition::Never {
-                    OpCode::Nop
-                } else {
-                    OpCode::MoveRegReg
-                }
-            },
-            0b111 => {
-                if condition == Condition::Never {
-                    OpCode::Nop
-                } else {
-                    OpCode::MoveRegImm
-                }
-            },
+        alu_op_32 = match instruction[24..=26] {
+            0x0 => AluOp::Add,
+            0x1 => AluOp::Sub,
+            0x2 => AluOp::And,
+            0x3 => AluOp::Or,
+            0x4 => AluOp::Xor,
+            0x5 => AluOp::Shl,
+            0x6 => AluOp::Lsr,
+            0x7 => AluOp::Asr,
         };
     }
 
-    sig reg_load: bits<5>;
-    sig reg_lhs: bits<5>;
-    sig reg_rhs: bits<5>;
+    sig move_cond_32: Condition;
     comb {
-        reg_load = instruction_word[ 7..12];
-        reg_lhs  = instruction_word[12..17];
-        reg_rhs  = instruction_word[17..22];
+        move_cond_32 = match instruction[24..=26] {
+            0x0 => Condition::Equal,
+            0x1 => Condition::NotEqual,
+            0x2 => Condition::UnsignedLessThan,
+            0x3 => Condition::UnsignedGreaterOrEqual,
+            0x4 => Condition::SignedLessThan,
+            0x5 => Condition::SignedGreaterOrEqual,
+            0x6 => Condition::Always,
+            0x7 => Condition::Never,
+        };
     }
 
-    let imm_decoder: ImmediateDecoder;
+    sig aluc_op: AluOp;
     comb {
-        imm_decoder.instruction_word = instruction_word;
-        imm_decoder.op_code = op_code;
+        aluc_op = match instructon[24] {
+            0x0 => AluOp::AddC,
+            0x1 => AluOp::SubC,
+        };
+    }
 
-        imm_out = imm_decoder.imm;
+    sig muldiv_op: AluOp;
+    comb {
+        muldiv_op = match instruction[24..=26] {
+            0x0 => AluOp::Mul,
+            0x1 => AluOp::MulHuu,
+            0x2 => AluOp::MulHss,
+            0x3 => AluOp::MulHus,
+            0x4 => AluOp::Divu,
+            0x5 => AluOp::Divs,
+            0x6 => AluOp::Remu,
+            0x7 => AluOp::Rems,
+        };
     }
 
     comb {
-        // Defaults, result in a NOP if unchanged
-        alu_op_out = AluOp::Nop;
-        move_condition_out = Condition::Never;
-        jump_condition_out = Condition::Never;
-        load_flags_out = 0 as bit;
-        reg_lhs_select_out = 0 as bits::<5>;
-        reg_rhs_select_out = 0 as bits::<5>;
-        reg_load_select_out = 0 as bits::<5>;
-        lhs_bus_source_out = LhsBusSource::Register;
-        rhs_bus_source_out = RhsBusSource::Register;
-        data_bus_source_out = DataBusSource::Result;
-        mem_enable_out = 0 as bit;
-        mem_mode_out = MemoryMode::Bits32;
-        mem_sign_ext_out = 0 as bit;
-        mem_write_out = 0 as bit;
-        set_k_flag_out = 0 as bit;
-        clear_k_flag_out = 0 as bit;
+        decoded_instruction = nop;
+        immediate = 0;
+        
+        if hardware_interrupt & (current_interrupt_state == InterruptState::Listening) {
+            decoded_instruction.jump_condition = Condition::Always;
+            decoded_instruction.interrupt_kind = InterruptKind::Hardware;
+            decoded_instruction.interrupt_slot = hardware_interrupt_slot;
+            decoded_instruction.load_ira = true;
+            decoded_instruction.lhs_bus_source = LhsBusSource::Interrupt;
+            decoded_instruction.set_interrupt_state = true;
+            decoded_instruction.new_interrupt_state = InterruptState::Servicing;
+        } else if instruction_valid & !stall {
+            if instruction[0] == 0 {
+                match instruction[1] {
+                    0 /* ldi */ => {
+                        decoded_instruction.alu_op = AluOp::Cond;
+                        decoded_instruction.move_condition = Condition::Always;
+                        decoded_instruction.reg_load_select = instruction[12..=15] as bits::<5>;
+                        decoded_instruction.rhs_bus_source = RhsBusSource::Immediate;
+                        immediate = (
+                            instruction[3]
+                            @ instruction[4..=6]
+                            @ instruction[2]
+                            @ instruction[7..=11]
+                            @ (0 as bits::<22>)
+                        ) >>> 22;
+                    },
+                    1 /* addi */ => {
+                        decoded_instruction.alu_op = AluOp::Add;
+                        decoded_instruction.load_flags = true;
+                        decoded_instruction.reg_lhs_select = instruction[12..=15] as bits::<5>;
+                        decoded_instruction.reg_load_select = instruction[12..=15] as bits::<5>;
+                        decoded_instruction.rhs_bus_source = RhsBusSource::Immediate;
+                        immediate = (
+                            instruction[3]
+                            @ instruction[4..=6]
+                            @ instruction[2]
+                            @ instruction[7..=11]
+                            @ (0 as bits::<22>)
+                        ) >>> 22;
+                    },
+                }
+            } else if instruction[1] == 0 {
+                match instruction[2] {
+                    0 /* j */ => {
+                        decoded_instruction.jump_condition = Condition::Always;
+                        decoded_instruction.reg_lhs_select = instruction[12..=15] as bits::<5>;
+                        immediate = (
+                            instruction[3]
+                            @ instruction[4..=6]
+                            @ instruction[7]
+                            @ instruction[8..=11]
+                            @ (0 as bits::<23>)
+                        ) >>> 22;
+                    },
+                    1 /* jl */ => {
+                        decoded_instruction.alu_op = AluOp::Cond;
+                        decoded_instruction.move_condition = Condition::Always;
+                        decoded_instruction.jump_condition = Condition::Always;
+                        decoded_instruction.reg_lhs_select = instruction[12..=15] as bits::<5>;
+                        decoded_instruction.reg_load_select = REG_RA;
+                        decoded_instruction.rhs_bus_source = RhsBusSource::ProgramCounter;
+                        immediate = (
+                            instruction[3]
+                            @ instruction[4..=6]
+                            @ instruction[7]
+                            @ instruction[8..=11]
+                            @ (0 as bits::<23>)
+                        ) >>> 22;
+                    },
+                }
+            } else if instruction[2] == 0 {
+                match instruction[7] {
+                    0 /* branch16 */ => {
+                        decoded_instruction.jump_condition = branch_cond;
+                        decoded_instruction.lhs_bus_source = LhsBusSource::ProgramCounter;
+                        immediate = (
+                            instruction[3]
+                            @ instruction[4..=6]
+                            @ instruction[15]
+                            @ instruction[8..=11]
+                            @ (0 as bits::<23>)
+                        ) >>> 22;
 
-        // Set every signal we care about explicitely, even if it's the default
-        match op_code {
-            OpCode::System => {
-                match instruction_word[3] {
-                    0b0 => {
-                        alu_op_out = AluOp::Cond;
-                        move_condition_out = Condition::Always;
-                        jump_condition_out = Condition::Always;
-                        reg_load_select_out = reg_load;
-                        lhs_bus_source_out = LhsBusSource::Syscall;
-                        rhs_bus_source_out = RhsBusSource::Pc;
-                        data_bus_source_out = DataBusSource::Result;
-                        set_k_flag_out = 1 as bit;
+                        if instruction[12..=14] == 0x7 {
+                            decoded_instruction.alu_op = AluOp::Cond;
+                            decoded_instruction.move_condition = Condition::Always;
+                            decoded_instruction.reg_load_select = REG_RA;
+                            decoded_instruction.rhs_bus_source = RhsBusSource::ProgramCounter;
+                        }
                     },
-                    0b1 => {
-                        clear_k_flag_out = 1 as bit;
-                    },
-                }
-            },
-            OpCode::AluRegReg => {
-                alu_op_out = alu_op;
-                load_flags_out = 1 as bit;
-                reg_lhs_select_out = reg_lhs;
-                reg_rhs_select_out = reg_rhs;
-                reg_load_select_out = reg_load;
-                lhs_bus_source_out = LhsBusSource::Register;
-                rhs_bus_source_out = RhsBusSource::Register;
-                data_bus_source_out = DataBusSource::Result;
-            },
-            OpCode::AluRegImm => {
-                alu_op_out = alu_op;
-                load_flags_out = 1 as bit;
-                reg_lhs_select_out = reg_lhs;
-                reg_load_select_out = reg_load;
-                lhs_bus_source_out = LhsBusSource::Register;
-                rhs_bus_source_out = RhsBusSource::Immediate;
-                data_bus_source_out = DataBusSource::Result;
-            },
-            OpCode::Load => {
-                reg_lhs_select_out = reg_lhs;
-                reg_load_select_out = reg_load;
-                lhs_bus_source_out = LhsBusSource::Register;
-                data_bus_source_out = DataBusSource::Memory;
-                mem_enable_out = 1 as bit;
-                mem_mode_out = mem_mode;
-                mem_sign_ext_out = instruction_word[5];
-            },
-            OpCode::Store => {
-                reg_lhs_select_out = reg_lhs;
-                reg_rhs_select_out = reg_load;
-                lhs_bus_source_out = LhsBusSource::Register;
-                rhs_bus_source_out = RhsBusSource::Register;
-                mem_enable_out = 1 as bit;
-                mem_mode_out = mem_mode;
-                mem_write_out = 1 as bit;
-            },
-            OpCode::Branch => {
-                alu_op_out = AluOp::Cond;
-                move_condition_out = Condition::Always;
-                jump_condition_out = condition;
-                reg_load_select_out = reg_load;
-                lhs_bus_source_out = LhsBusSource::Pc;
-                rhs_bus_source_out = RhsBusSource::Pc;
-                data_bus_source_out = DataBusSource::Result;
-            },
-            OpCode::MoveRegReg => {
-                alu_op_out = AluOp::Cond;
-                move_condition_out = condition;
-                reg_lhs_select_out = reg_lhs;
-                reg_rhs_select_out = reg_rhs;
-                reg_load_select_out = reg_load;
-                lhs_bus_source_out = LhsBusSource::Register;
-                rhs_bus_source_out = RhsBusSource::Register;
-                data_bus_source_out = DataBusSource::Result;
-            },
-            OpCode::MoveRegImm => {
-                alu_op_out = AluOp::Cond;
-                move_condition_out = condition;
-                reg_lhs_select_out = reg_lhs;
-                reg_load_select_out = reg_load;
-                lhs_bus_source_out = LhsBusSource::Register;
-                rhs_bus_source_out = RhsBusSource::Immediate;
-                data_bus_source_out = DataBusSource::Result;
-            },
-            OpCode::Jump => {
-                alu_op_out = AluOp::Cond;
-                move_condition_out = Condition::Always;
-                jump_condition_out = Condition::Always;
-                reg_lhs_select_out = reg_lhs;
-                reg_load_select_out = reg_load;
-                lhs_bus_source_out = LhsBusSource::Register;
-                rhs_bus_source_out = RhsBusSource::Pc;
-                data_bus_source_out = DataBusSource::Result;
-            },
-            OpCode::UI => {
-                match instruction_word[3] {
-                    0b0 => {
-                        alu_op_out = AluOp::Cond;
-                        move_condition_out = Condition::Always;
-                        reg_load_select_out = reg_load;
-                        rhs_bus_source_out = RhsBusSource::Immediate;
-                        data_bus_source_out = DataBusSource::Result;
-                    },
-                    0b1 => {
-                        alu_op_out = AluOp::Add;
-                        reg_load_select_out = reg_load;
-                        lhs_bus_source_out = LhsBusSource::Pc;
-                        rhs_bus_source_out = RhsBusSource::Immediate;
-                        data_bus_source_out = DataBusSource::Result;
+                    1 => match instruction[3] {
+                        0 /* ldui */ => {
+                            decoded_instruction.alu_op = AluOp::Cond;
+                            decoded_instruction.move_condition = Condition::Always;
+                            decoded_instruction.reg_load_select = instruction[12..=16];
+                            decoded_instruction.rhs_bus_source = RhsBusSource::Immediate;
+                            immediate = instruction[27..=31]
+                                @ instruction[8..=11]
+                                @ instruction[4..=6]
+                                @ instruction[17..=21]
+                                @ instruction[22..=23]
+                                @ instruction[24..=26]
+                                @ (0 as bits::<10>);
+                        },
+                        1 /* apcui */ => {
+                            decoded_instruction.alu_op = AluOp::Add;
+                            decoded_instruction.reg_load_select = instruction[12..=16];
+                            decoded_instruction.lhs_bus_source = LhsBusSource::ProgramCounter;
+                            decoded_instruction.rhs_bus_source = RhsBusSource::Immediate;
+                            immediate = instruction[27..=31]
+                                @ instruction[8..=11]
+                                @ instruction[4..=6]
+                                @ instruction[17..=21]
+                                @ instruction[22..=23]
+                                @ instruction[24..=26]
+                                @ (0 as bits::<10>);
+                        },
                     },
                 }
-            },
-            _ => {},
+            } else {
+                match instruction[3..=4] {
+                    0 /* alu16 */ => {
+                        decoded_instruction.alu_op = alu_op_16;
+                        decoded_instruction.load_flags = true;
+                        decoded_instruction.reg_lhs_select = instruction[12..=15] as bits::<5>;
+                        decoded_instruction.reg_rhs_select = instruction[8..=11] as bits::<5>;
+                        decoded_instruction.reg_load_select = instruction[12..=15] as bits::<5>;
+                    },
+                    1 /* mov16 */ => {
+                        decoded_instruction.alu_op = AluOp::Cond;
+                        decoded_instruction.move_condition = move_cond_16;
+                        decoded_instruction.reg_lhs_select = instruction[12..=15] as bits::<5>;
+                        decoded_instruction.reg_rhs_select = instruction[8..=11] as bits::<5>;
+                        decoded_instruction.reg_load_select = instruction[12..=15] as bits::<5>;
+                    },
+                    2 => if instruction[5..=6] == 0 {
+                        match instruction[7] {
+                            0 /* cmp16 */ => {
+                                decoded_instruction.alu_op = AluOp::Sub;
+                                decoded_instruction.load_flags = true;
+                                decoded_instruction.reg_lhs_select = instruction[12..=15] as bits::<5>;
+                                decoded_instruction.reg_rhs_select = instruction[8..=11] as bits::<5>;
+                            },
+                            1 => {
+                                match instruction[8..=11] {
+                                    0x0 /* ret */ => {
+                                        decoded_instruction.jump_condition = Condition::Always;
+                                        decoded_instruction.reg_lhs_select = REG_RA;
+                                    },
+                                    0x1 /* sysret */ => {
+                                        match current_interrupt_state {
+                                            InterruptState::Servicing => {
+                                                decoded_instruction.jump_condition = Condition::Always;
+                                                decoded_instruction.lhs_bus_source = LhsBusSource::Ira;
+                                                decoded_instruction.set_interrupt_state = true;
+                                                decoded_instruction.new_interrupt_state = InterruptState::Listening;
+                                            },
+                                            InterruptState::Listening => {
+                                                decoded_instruction = illegal_instruction;
+                                            },
+                                        }
+                                    },
+                                    0x2 /* fence */ => {
+                                        // NOP on a system with no data cache
+                                    },
+                                    0x3 /* ifence */ => {
+                                        // NOP on a system with no instruction cache
+                                    },
+                                    0x4..=0xD => {
+                                        decoded_instruction = illegal_instruction;
+                                    },
+                                    0xE /* envcall */ => {
+                                        // NOP on bare metal
+                                    },
+                                    0xF /* syscall */ => {
+                                        match current_interrupt_state {
+                                            InterruptState::Servicing => {
+                                                decoded_instruction = illegal_instruction;
+                                            },
+                                            InterruptState::Listening => {
+                                                decoded_instruction.jump_condition = Condition::Always;
+                                                decoded_instruction.interrupt_kind = InterruptKind::Software;
+                                                decoded_instruction.interrupt_slot = instruction[12..=15];
+                                                decoded_instruction.load_ira = true;
+                                                decoded_instruction.lhs_bus_source = LhsBusSource::Interrupt;
+                                                decoded_instruction.set_interrupt_state = true;
+                                                decoded_instruction.new_interrupt_state = InterruptState::Servicing;
+                                            },
+                                        }
+                                    },
+                                }
+                            },
+                        }
+                    } else /* alui16 */ {
+                        decoded_instruction.alu_op = alui_op_16;
+                        decoded_instruction.load_flags = true;
+                        decoded_instruction.reg_lhs_select = instruction[12..=15] as bits::<5>;
+                        decoded_instruction.reg_load_select = instruction[12..=15] as bits::<5>;
+                        decoded_instruction.rhs_bus_source = RhsBusSource::Immediate;
+                        immediate = instruction[7..=11] as bits::<32>;
+                    },
+                    3 => match instruction[5] {
+                        0 => match instruction[6] {
+                            0 /* ld.32 [sp] */ => {
+                                decoded_instruction.reg_lhs_select = REG_SP;
+                                decoded_instruction.reg_load_select = instruction[12..=15] as bits::<5>;
+                                decoded_instruction.data_bus_source = DataBusSource::Memory;
+                                decoded_instruction.mem_enable = true;
+                                immediate = (instruction[7..=8] @ instruction[9..=11] @ (0 as bits::<2>)) as bits::<32>;
+                            },
+                            1 /* st.32 [sp] */ => {
+                                decoded_instruction.reg_lhs_select = REG_SP;
+                                decoded_instruction.reg_rhs_select = instruction[12..=15] as bits::<5>;
+                                decoded_instruction.mem_enable = true;
+                                immediate = (instruction[7..=8] @ instruction[9..=11] @ (0 as bits::<2>)) as bits::<32>;
+                            },
+                        },
+                        1 => match instruction[22..=23] {
+                            0b00 => {
+                                match instruction[6] {
+                                    0 /* jl */ => {
+                                        decoded_instruction.alu_op = AluOp::Cond;
+                                        decoded_instruction.move_condition = Condition::Always;
+                                        decoded_instruction.jump_condition = Condition::Always;
+                                        decoded_instruction.reg_lhs_select = instruction[17..=21];
+                                        decoded_instruction.reg_load_select = instruction[12..=16];
+                                        decoded_instruction.rhs_bus_source = RhsBusSource::ProgramCounter;
+                                        immediate = (
+                                            instruction[31]
+                                            @ instruction[24..=26]
+                                            @ instruction[7]
+                                            @ instruction[27..=30]
+                                            @ instruction[8..=11]
+                                            @ (0 as bits::<19>)
+                                        ) >> 18;
+                                    },
+                                    1 /* branch32 */ => {
+                                        decoded_instruction.jump_condition = branch_cond;
+                                        decoded_instruction.lhs_bus_source = LhsBusSource::ProgramCounter;
+                                        immediate = (
+                                            instruction[31]
+                                            @ instruction[15..=21]
+                                            @ instruction[24..=26]
+                                            @ instruction[7]
+                                            @ instruction[27..=30]
+                                            @ instruction[8..=11]
+                                            @ (0 as bits::<12>)
+                                        ) >> 11;
+
+                                        if instruction[12..=14] == 0x7 {
+                                            decoded_instruction.alu_op = AluOp::Cond;
+                                            decoded_instruction.move_condition = Condition::Always;
+                                            decoded_instruction.reg_load_select = REG_RA;
+                                            decoded_instruction.rhs_bus_source = RhsBusSource::ProgramCounter;
+                                        }
+                                    },
+                                }
+                            },
+                            0b01 => {
+                                match instruction[6] {
+                                    0 /* alui32 */ => {
+                                        decoded_instruction.alu_op = alu_op_32;
+                                        decoded_instruction.load_flags = true;
+                                        decoded_instruction.reg_lhs_select = instruction[17..=21];
+                                        decoded_instruction.reg_load_select = instruction[12..=16];
+                                        decoded_instruction.rhs_bus_source = RhsBusSource::Immediate;
+                                        immediate = (
+                                            instruction[27..=31]
+                                            @ instruction[7..=11]
+                                            @ (0 as bits::<22>)
+                                        ) >>> 22;
+                                    },
+                                    1 /* movi32 */ => {
+                                        decoded_instruction.alu_op = AluOp::Cond;
+                                        decoded_instruction.move_condition = move_cond_32;
+                                        decoded_instruction.reg_lhs_select = instruction[17..=21];
+                                        decoded_instruction.reg_load_select = instruction[12..=16];
+                                        decoded_instruction.rhs_bus_source = RhsBusSource::Immediate;
+                                        immediate = (
+                                            instruction[27..=31]
+                                            @ instruction[7..=11]
+                                            @ (0 as bits::<22>)
+                                        ) >>> 22;
+                                    },
+                                }
+                            },
+                            0b10 => {
+                                match instruction[6] {
+                                    0 /* load */ => {
+                                        decoded_instruction.reg_lhs_select = instruction[17..=21];
+                                        decoded_instruction.reg_load_select = instruction[12..=16];
+                                        decoded_instruction.data_bus_source = DataBusSource::Memory;
+                                        decoded_instruction.mem_enable = true;
+                                        immediate = (
+                                            instruction[27..=31]
+                                            @ instruction[7..=11]
+                                            @ (0 as bits::<22>)
+                                        ) >>> 22;
+                                    },
+                                    1 /* store */ => {
+                                        decoded_instruction.reg_lhs_select = instruction[17..=21];
+                                        decoded_instruction.reg_rhs_select = instruction[7] @ instruction[8..=11];
+                                        decoded_instruction.mem_enable = true;
+                                        immediate = (
+                                            instruction[27..=31]
+                                            @ instruction[12..=16]
+                                            @ (0 as bits::<22>)
+                                        ) >>> 22;
+                                    },
+                                }
+                            },
+                            0b11 => match instruction[27..=31] @ instruction[6] {
+                                0b000000 /* alu32 */ => {
+                                    decoded_instruction.alu_op = alu_op_32;
+                                    decoded_instruction.load_flags = true;
+                                    decoded_instruction.reg_lhs_select = instruction[17..=21];
+                                    decoded_instruction.reg_rhs_select = instruction[7] @ instruction[8..=11];
+                                    decoded_instruction.reg_load_select = instruction[12..=16];
+                                },
+                                0b000001 /* mov32 */ => {
+                                    decoded_instruction.alu_op = AluOp::Cond;
+                                    decoded_instruction.move_condition = move_cond_32;
+                                    decoded_instruction.reg_lhs_select = instruction[17..=21];
+                                    decoded_instruction.reg_rhs_select = instruction[7] @ instruction[8..=11];
+                                    decoded_instruction.reg_load_select = instruction[12..=16];
+                                },
+                                0b000010 => {
+                                    if instruction[25..=26] == 0 /* aluc */ {
+                                        decoded_instruction.alu_op = aluc_op;
+                                        decoded_instruction.load_flags = true;
+                                        decoded_instruction.reg_lhs_select = instruction[17..=21];
+                                        decoded_instruction.reg_rhs_select = instruction[7] @ instruction[8..=11];
+                                        decoded_instruction.reg_load_select = instruction[12..=16];
+                                    } else {
+                                        decoded_instruction = illegal_instruction;
+                                    }
+                                },
+                                0b000011 /* muldiv */ => {
+                                    decoded_instruction.alu_op = muldiv_op;
+                                    decoded_instruction.load_flags = true;
+                                    decoded_instruction.reg_lhs_select = instruction[17..=21];
+                                    decoded_instruction.reg_rhs_select = instruction[7] @ instruction[8..=11];
+                                    decoded_instruction.reg_load_select = instruction[12..=16];
+                                },
+                                0b000100 /* fpu3 */ => {
+                                    // TODO
+                                    decoded_instruction = illegal_instruction;
+                                },
+                                0b000101 /* fpu2 */ => {
+                                    // TODO
+                                    decoded_instruction = illegal_instruction;
+                                },
+                                0b000110 /* fcmp */ => {
+                                    // TODO
+                                    decoded_instruction = illegal_instruction;
+                                },
+                                0b000111 /* cvt */ => {
+                                    // TODO
+                                    decoded_instruction = illegal_instruction;
+                                },
+                                0b001000 | 0b001010 | 0b001100 | 0b001110 /* load reserve */ => {
+                                    // ordering does not matter on a system without cache
+                                    decoded_instruction.reg_lhs_select = instruction[17..=21];
+                                    decoded_instruction.reg_load_select = instruction[12..=16];
+                                    decoded_instruction.data_bus_source = DataBusSource::Memory;
+                                    decoded_instruction.mem_enable = true;
+                                    decoded_instruction.mem_reserve = true;
+                                },
+                                0b001001 | 0b001011 | 0b001101 | 0b001111 /* store conditional */ => {
+                                    // ordering does not matter on a system without cache
+                                    decoded_instruction.reg_lhs_select = instruction[17..=21];
+                                    decoded_instruction.reg_rhs_select = instruction[7] @ instruction[8..=11];
+                                    decoded_instruction.reg_load_select = instruction[12..=16];
+                                    decoded_instruction.data_bus_source = DataBusSource::Stc;
+                                    decoded_instruction.mem_enable = true;
+                                },
+                                0b010000..=0b111111 => {
+                                    decoded_instruction = illegal_instruction;
+                                },
+                            },
+                        },
+                    },
+                }
+            }
         }
     }
 }

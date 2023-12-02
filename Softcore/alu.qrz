@@ -1,16 +1,41 @@
-mod Alu<BITS> (
-    in sig lhs: bits<BITS>,
-    in sig rhs: bits<BITS>,
+enum AluOp: bits<5> {
+    Add = 0x00,
+    Sub = 0x01,
+    And = 0x02,
+    Or  = 0x03,
+    Xor = 0x04,
+    Shl = 0x05,
+    Lsr = 0x06,
+    Asr = 0x07,
+
+    AddC = 0x08,
+    SubC = 0x09,
+
+    Cond = 0x0F,
+
+    Mul    = 0x10,
+    MulHuu = 0x11,
+    MulHss = 0x12,
+    MulHus = 0x13,
+    Divu   = 0x14,
+    Divs   = 0x15,
+    Remu   = 0x16,
+    Rems   = 0x17,
+
+    Nop = 0x1F,
+}
+
+mod Alu (
+    in sig lhs: bits<32>,
+    in sig rhs: bits<32>,
     in sig flags_in: Flags,
-    in sig conditional: bit,
+    in sig conditional: bool,
     in sig op: AluOp,
 
-    out sig result: bits<BITS>,
+    out sig result: bits<32>,
     out sig flags_out: Flags,
 ) {
-    const LONG_BITS = 2 * BITS;
-
-    let adder: Adder<BITS>;
+    let adder: Adder<32>;
     comb {
         adder.lhs = lhs;
         adder.rhs = rhs;
@@ -24,22 +49,19 @@ mod Alu<BITS> (
         };
     }
 
-    sig mult_result: bits<LONG_BITS>;
     let mult: Mult32;
     comb {
-        mult.lhs = lhs as bits::<32>;
-        mult.rhs = rhs as bits::<32>;
+        mult.lhs = lhs;
+        mult.rhs = rhs;
         mult.op = match op {
             AluOp::MulHuu => MultOp::MulUU,
             AluOp::MulHss => MultOp::MulSS,
             AluOp::MulHus => MultOp::MulUS,
             _             => MultOp::MulUU,
         };
-
-        mult_result = mult.result as bits::<LONG_BITS>;
     }
 
-    const SHIFT_AMOUNT_BITS = clog2(BITS);
+    const SHIFT_AMOUNT_BITS = clog2(32);
     sig shift_amount: bits<SHIFT_AMOUNT_BITS>;
     comb {
         shift_amount = rhs[0..SHIFT_AMOUNT_BITS];
@@ -48,46 +70,47 @@ mod Alu<BITS> (
     comb {
         result = match op {
             AluOp::Add | AluOp::AddC | AluOp::Sub | AluOp::SubC => adder.result,
-            AluOp::MulHuu | AluOp::MulHss | AluOp::MulHus => mult_result[BITS..LONG_BITS],
-            AluOp::And  => lhs & rhs,
-            AluOp::Or   => lhs | rhs,
-            AluOp::Xor  => lhs ^ rhs,
-            AluOp::Shl  => lhs << shift_amount as bits::<BITS>,
-            AluOp::Lsr  => lhs >> shift_amount as bits::<BITS>,
-            AluOp::Asr  => lhs >>> shift_amount as bits::<BITS>,
-            AluOp::Mul  => mult_result[0..BITS],
+            AluOp::And => lhs & rhs,
+            AluOp::Or => lhs | rhs,
+            AluOp::Xor => lhs ^ rhs,
+            AluOp::Shl => lhs << (shift_amount as bits::<32>),
+            AluOp::Lsr => lhs >> (shift_amount as bits::<32>),
+            AluOp::Asr => lhs >>> (shift_amount as bits::<32>),
             AluOp::Cond => if conditional { rhs } else { lhs },
-            AluOp::Nop | AluOp::Divu | AluOp::Divs | AluOp::Remu | AluOp::Rems => 0 as bits::<BITS>,
+            AluOp::Mul => mult.result[0..32],
+            AluOp::MulHuu | AluOp::MulHss | AluOp::MulHus => mult.result[32..64],
+            AluOp::Divu | AluOp::Divs | AluOp::Remu | AluOp::Rems => 0,
+            AluOp::Nop => 0,
         };
     }
 
-    sig zero: bit;
+    sig zero: bool;
     comb {
-        zero = result == (0 as bits::<BITS>);
+        zero = result == 0;
 
         flags_out = match op {
             AluOp::Add | AluOp::Sub => Flags {
-                carry   : adder.carry_out,
-                zero    : zero,
-                sign    : adder.sign,
+                carry: adder.carry_out,
+                zero: zero,
+                sign: adder.sign,
                 overflow: adder.overflow,
             },
             AluOp::AddC | AluOp::SubC => Flags {
-                carry   : adder.carry_out,
-                zero    : zero & flags_in.zero,
-                sign    : adder.sign,
+                carry: adder.carry_out,
+                zero: zero & flags_in.zero,
+                sign: adder.sign,
                 overflow: adder.overflow,
             },
             AluOp::And | AluOp::Or | AluOp::Xor | AluOp::Shl | AluOp::Lsr | AluOp::Asr | AluOp::Mul => Flags {
-                carry   : flags_in.carry,
-                zero    : zero,
-                sign    : flags_in.sign,
+                carry: flags_in.carry,
+                zero: zero,
+                sign: flags_in.sign,
                 overflow: flags_in.overflow,
             },
             AluOp::MulHuu | AluOp::MulHss | AluOp::MulHus => Flags {
-                carry   : flags_in.carry,
-                zero    : zero & flags_in.zero,
-                sign    : flags_in.sign,
+                carry: flags_in.carry,
+                zero: zero & flags_in.zero,
+                sign: flags_in.sign,
                 overflow: flags_in.overflow,
             },
             AluOp::Cond | AluOp::Nop | AluOp::Divu | AluOp::Divs | AluOp::Remu | AluOp::Rems => flags_in,

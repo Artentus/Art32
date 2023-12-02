@@ -24,8 +24,11 @@ mod Cpu (
     in sig reset: bool,
     in sig clk: bit,
 ) {
-    let ir: InstructionRegister;
-    let alu: Alu<32>;
+}
+
+/*
+    let fetch_unit: FetchUnit;
+    let alu: Alu;
     let move_condition_unit: ConditionUnit;
     let jump_condition_unit: ConditionUnit;
     let flag_register: FlagRegister;
@@ -357,3 +360,4 @@ mod Cpu (
     }
     // -----------------------------------------------
 }
+*/

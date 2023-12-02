@@ -1,3 +1,14 @@
+enum Condition: bits<3> {
+    Equal                  = 0x0, // Z
+    NotEqual               = 0x1, // !Z
+    UnsignedLessThan       = 0x2, // !C
+    UnsignedGreaterOrEqual = 0x3, // C
+    SignedLessThan         = 0x4, // S != O
+    SignedGreaterOrEqual   = 0x5, // S == O
+    Always                 = 0x6, // true
+    Never                  = 0x7, // false
+}
+
 mod ConditionUnit (
     in sig flags: Flags,
     in sig condition: Condition,

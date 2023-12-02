@@ -28,15 +28,7 @@ extern mod Pll (
     out sig clk200: bit,
     out sig clk80: bit,
     out sig clk40: bit,
-    out sig locked: bit,
-);
-
-extern mod Mult16 (
-    in sig SignA: bit,
-    in sig SignB: bit,
-    in sig A: bits<16>,
-    in sig B: bits<16>,
-    out sig P: bits<32>,
+    out sig locked: bool,
 );
 
 extern mod KernelRam (
@@ -47,7 +39,7 @@ extern mod KernelRam (
     in sig data_in: bits<32>,
     out reg data_out: bits<32>,
     in sig data_byte_enable: bits<4>,
-    in sig data_write: bit,
+    in sig data_write: bool,
 
     in sig clk: bit,
 );
@@ -56,124 +48,44 @@ extern mod DDR (
     in sig d_in: bits<2>,
     out sig d_out: bit,
 
-    in sig reset: bit,
+    in sig reset: bool,
     in sig clk: bit,
 );
 
+const REG_ZERO = 0;
+const REG_RA = 1;
+const REG_SP = 2;
+
 struct Flags {
-    carry   : bit,
-    zero    : bit,
-    sign    : bit,
-    overflow: bit,
-}
-
-enum AdderOp: bits<2> {
-    Add  = 0x0,
-    AddC = 0x1,
-    Sub  = 0x2,
-    SubC = 0x3,
-}
-
-enum MultOp: bits<2> {
-    MulUU = 0b00,
-    MulSS = 0b11,
-    MulUS = 0b01,
-}
-
-enum AluOp: bits<5> {
-    Add = 0x00,
-    Sub = 0x01,
-    And = 0x02,
-    Or  = 0x03,
-    Xor = 0x04,
-    Shl = 0x05,
-    Lsr = 0x06,
-    Asr = 0x07,
-
-    AddC = 0x08,
-    SubC = 0x09,
-
-    Cond = 0x0F,
-
-    Mul    = 0x10,
-    MulHuu = 0x11,
-    MulHss = 0x12,
-    MulHus = 0x13,
-    Divu   = 0x14,
-    Divs   = 0x15,
-    Remu   = 0x16,
-    Rems   = 0x17,
-
-    Nop = 0x1F,
-}
-
-enum Condition: bits<3> {
-    Equal                  = 0x0, // Z
-    NotEqual               = 0x1, // !Z
-    UnsignedLessThan       = 0x2, // !C
-    UnsignedGreaterOrEqual = 0x3, // C
-    SignedLessThan         = 0x4, // S != O
-    SignedGreaterOrEqual   = 0x5, // S == O
-    Always                 = 0x6, // true
-    Never                  = 0x7, // false
-}
-
-enum OpCode16: bits<3> {
-    Misc        = 0x0,
-    Jump        = 0x1,
-    LoadImm     = 0x2,
-    AddImm      = 0x3,
-    LoadStoreSp = 0x4,
-    SpecialSp   = 0x5,
-    Branch      = 0x6,
-    Inst32      = 0x7,
-}
-
-enum OpCode32: bits<5> {
-    AluRegReg  = 0x00,
-    AluRegImm  = 0x01,
-    MoveRegReg = 0x02,
-    MoveRegImm = 0x03,
-    CarryExt   = 0x04,
-    Jump       = 0x05,
-    Load       = 0x06,
-    Store      = 0x07,
-    MulExt     = 0x08,
-    Nop        = 0x1F,
-}
-
-enum MiscCode: bits<3> {
-    Nop       = 0x0,
-    Return    = 0x1,
-    IntReturn = 0x2,
-    Syscall   = 0x3,
-    Move      = 0x4,
-    Compare   = 0x5,
-    Alu       = 0x6,
-    ShiftImm  = 0x7,
+    carry: bit,
+    zero: bool,
+    sign: bool,
+    overflow: bool,
 }
 
 enum LhsBusSource: bits<3> {
-    Register = 0b000,
-    Pc       = 0b001,
-    Syscall  = 0b010,
-    Forward3 = 0b100,
-    Forward4 = 0b101,
-    Forward5 = 0b110,
+    Register       = 0b000,
+    ProgramCounter = 0b001,
+    Interrupt      = 0b010,
+    Ira            = 0b011,
+    Forward3       = 0b101,
+    Forward4       = 0b110,
+    Forward5       = 0b111,
 }
 
 enum RhsBusSource: bits<3> {
-    Register  = 0b000,
-    Pc        = 0b001,
-    Immediate = 0b010,
-    Forward3  = 0b100,
-    Forward4  = 0b101,
-    Forward5  = 0b110,
+    Register       = 0b000,
+    ProgramCounter = 0b001,
+    Immediate      = 0b010,
+    Forward3       = 0b101,
+    Forward4       = 0b110,
+    Forward5       = 0b111,
 }
 
-enum DataBusSource: bit {
-    Result = 0b0,
-    Memory = 0b1,
+enum DataBusSource: bits<2> {
+    Execute = 0b00,
+    Memory  = 0b01,
+    Stc     = 0b10,
 }
 
 enum MemoryMode: bits<2> {
@@ -181,4 +93,43 @@ enum MemoryMode: bits<2> {
     Bits8  = 0b01,
     Bits16 = 0b10,
     IO     = 0b11,
+}
+
+enum PrivilegeLevel: bit {
+    System = 0b0,
+    User   = 0b1,
+}
+
+enum InterruptState: bit {
+    Servicing = 0b0,
+    Listening = 0b1,
+}
+
+enum InterruptKind: bits<2> {
+    Hardware,
+    Software,
+    Exception,
+}
+
+struct DecodedInstruction {
+    alu_op: AluOp,
+    move_condition: Condition,
+    jump_condition: Condition,
+    load_flags: bool,
+    reg_lhs_select: bits<5>,
+    reg_rhs_select: bits<5>,
+    reg_load_select: bits<5>,
+    interrupt_kind: InterruptKind,
+    interrupt_slot: bits<4>,
+    load_ira: bool,
+    lhs_bus_source: LhsBusSource,
+    rhs_bus_source: RhsBusSource,
+    data_bus_source: DataBusSource,
+    set_interrupt_state: bool,
+    new_interrupt_state: InterruptState,
+    mem_enable: bool,
+    mem_mode: MemoryMode,
+    mem_sign_ext: bool,
+    mem_write: bool,
+    mem_reserve: bool,
 }

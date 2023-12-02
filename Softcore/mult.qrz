@@ -1,3 +1,17 @@
+enum MultOp: bits<2> {
+    MulUU = 0b00,
+    MulSS = 0b11,
+    MulUS = 0b01,
+}
+
+extern mod Mult16 (
+    in sig SignA: bool,
+    in sig SignB: bool,
+    in sig A: bits<16>,
+    in sig B: bits<16>,
+    out sig P: bits<32>,
+);
+
 mod Mult32 (
     in sig lhs: bits<32>,
     in sig rhs: bits<32>,
@@ -5,19 +19,19 @@ mod Mult32 (
 
     in sig op: MultOp,
 ) {
-    sig lhs_sign: bit;
-    sig rhs_sign: bit;
+    sig lhs_sign: bool;
+    sig rhs_sign: bool;
     comb {
         lhs_sign = match op {
-            MultOp::MulUU => 0 as bit,
-            MultOp::MulSS => 1 as bit,
-            MultOp::MulUS => 0 as bit,
+            MultOp::MulUU => false,
+            MultOp::MulSS => true,
+            MultOp::MulUS => false,
         };
 
         rhs_sign = match op {
-            MultOp::MulUU => 0 as bit,
-            MultOp::MulSS => 1 as bit,
-            MultOp::MulUS => 1 as bit,
+            MultOp::MulUU => false,
+            MultOp::MulSS => true,
+            MultOp::MulUS => true,
         };
     }
 
@@ -38,8 +52,8 @@ mod Mult32 (
     sig prod_ll: bits<32>;
     let mult_ll: Mult16;
     comb {
-        mult_ll.SignA = 0 as bit;
-        mult_ll.SignB = 0 as bit;
+        mult_ll.SignA = false;
+        mult_ll.SignB = false;
         mult_ll.A = lhs_l;
         mult_ll.B = rhs_l;
 
@@ -49,7 +63,7 @@ mod Mult32 (
     sig prod_lh: bits<32>;
     let mult_lh: Mult16;
     comb {
-        mult_lh.SignA = 0 as bit;
+        mult_lh.SignA = false;
         mult_lh.SignB = rhs_sign;
         mult_lh.A = lhs_l;
         mult_lh.B = rhs_h;
@@ -61,7 +75,7 @@ mod Mult32 (
     let mult_hl: Mult16;
     comb {
         mult_hl.SignA = lhs_sign;
-        mult_hl.SignB = 0 as bit;
+        mult_hl.SignB = false;
         mult_hl.A = lhs_h;
         mult_hl.B = rhs_l;
 

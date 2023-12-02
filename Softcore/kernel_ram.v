@@ -13,7 +13,7 @@ module KernelRam (
 
     (* no_rw_check *)
     reg [31:0] mem [(1<<13)-1:0];
-    initial $readmemh("/home/mathis/test.hex", mem);
+    initial $readmemh("../Emulator/kernel/kernel.bin", mem);
 
     // Instruction Port
     always @(posedge clk) instr_out = mem[instr_addr_in];
