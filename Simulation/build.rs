@@ -1,10 +1,13 @@
 use glob::glob;
+use std::env;
+use std::path::Path;
 use std::process::Command;
 
 fn main() {
-    let out_dir = std::env::var("OUT_DIR").unwrap();
-    let yosys_path = std::env::var("YOSYS_PATH").unwrap();
+    let out_dir = env::var("OUT_DIR").unwrap();
+    let yosys_path = env::var("YOSYS_PATH").unwrap();
 
+    println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=../Softcore/");
     println!("cargo:rerun-if-changed=./tests/");
 
@@ -27,14 +30,22 @@ fn main() {
 
     for test_file in glob("./tests/*.qrz").unwrap().map(Result::unwrap) {
         let mut sv_file = out_dir.clone();
-        sv_file.push('/');
+        if !sv_file.ends_with('/') {
+            sv_file.push('/');
+        }
         sv_file.push_str(test_file.file_stem().unwrap().to_str().unwrap());
         sv_file.push_str(".sv");
 
         let mut json_file = out_dir.clone();
-        json_file.push('/');
+        if !json_file.ends_with('/') {
+            json_file.push('/');
+        }
         json_file.push_str(test_file.file_stem().unwrap().to_str().unwrap());
         json_file.push_str(".json");
+
+        if Path::try_exists(json_file.as_ref()).unwrap() {
+            std::fs::remove_file(&json_file).unwrap();
+        }
 
         #[cfg(target_os = "linux")]
         let mut quartz_cmd = Command::new("./quartz");
@@ -58,7 +69,7 @@ fn main() {
             panic!("{}", String::from_utf8_lossy(&quartz_output.stderr));
         }
 
-        let yosys_commands = format!("read_verilog -sv \"{sv_file}\"; read_verilog {yosys_input_files}; synth -top Top -flatten -noalumacc -nordff -run begin:fine; hierarchy -check; check; write_json \"{json_file}\"");
+        let yosys_commands = format!("read_verilog -sv \"{sv_file}\"; read_verilog -DSIM {yosys_input_files}; synth -top Top -flatten -noalumacc -nordff -run begin:fine; hierarchy -check; check; write_json \"{json_file}\"");
         let yosys_output = Command::new(&yosys_path)
             .arg("-p")
             .arg(yosys_commands)
