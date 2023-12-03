@@ -603,7 +603,7 @@ fn jl_32(
     #[strategy(cpu())] mut cpu: Cpu,
     #[strategy(reg32())] link: Register,
     #[strategy(reg32())] base: Register,
-    #[strategy(-4096..=4095)]
+    #[strategy(-8192..=8191)]
     #[filter(align2)]
     offset: i32,
 ) {
