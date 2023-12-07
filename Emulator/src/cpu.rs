@@ -879,7 +879,7 @@ impl Cpu {
     }
 
     #[inline]
-    fn fpu2_32(&mut self, instruction: u32) -> Result<(), ExceptionKind> {
+    fn fpu2_32(&mut self, instruction: u32) {
         let rs = Register::try_from(shuffle_bits!(instruction { [21:17] => [4:0] })).unwrap();
         let rd = Register::try_from(shuffle_bits!(instruction { [16:12] => [4:0] })).unwrap();
 
@@ -892,13 +892,11 @@ impl Cpu {
             0b100 /* fabs */ => value.abs(),
             0b101 /* fneg */ => -value,
             0b110 /* fsqrt */ => value.sqrt(),
-            0b111 => return Err(ExceptionKind::IllegalInstruction),
+            0b111 /* frsqrt */ => value.sqrt().recip(),
             _ => unreachable!(),
         };
 
         self.set_reg(rd, result.to_bits());
-
-        Ok(())
     }
 
     #[inline]
@@ -1105,7 +1103,7 @@ impl Cpu {
                                     0b000010 => self.aluc_32(instruction)?,
                                     0b000011 => self.mul_32(instruction),
                                     0b000100 => self.fpu3_32(instruction)?,
-                                    0b000101 => self.fpu2_32(instruction)?,
+                                    0b000101 => self.fpu2_32(instruction),
                                     0b000110 => self.fcmp_32(instruction),
                                     0b000111 => self.cvt_32(instruction)?,
                                     0b001000 | 0b001010 | 0b001100 | 0b001110 => {
