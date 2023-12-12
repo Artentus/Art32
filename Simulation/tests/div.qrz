@@ -1,0 +1,28 @@
+top mod Top {
+    let numerator: InPort<32>;
+    let denominator: InPort<32>;
+    let quotient: OutPort<32>;
+    let remainder: OutPort<32>;
+
+    let start: InPort<1>;
+    let ready: OutPort<1>;
+
+    let enable: InPort<1>;
+    let reset: InPort<1>;
+    let clk: InPort<1>;
+
+    let div: Div<32>;
+    comb {
+        div.numerator = numerator.d_in;
+        div.denominator = denominator.d_in;
+        quotient.d_out = div.quotient;
+        remainder.d_out = div.remainder;
+
+        div.start = start.d_in;
+        ready.d_out = div.ready;
+
+        div.enable = enable.d_in;
+        div.reset = reset.d_in;
+        div.clk = clk.d_in;
+    }
+}

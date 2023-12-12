@@ -1,0 +1,381 @@
+enum FpuOp: bits<4> {
+    Add   = 0x0,
+    Sub   = 0x1,
+    Mul   = 0x2,
+    Div   = 0x3,
+    //Rem   = 0x4,
+    //Min   = 0x6,
+    //Max   = 0x7,
+    //Floor = 0x8,
+    //Ceil  = 0x9,
+    //Round = 0xA,
+    //Fract = 0xB,
+    Abs   = 0xC,
+    Neg   = 0xD,
+    Sqrt  = 0xE,
+    Rsqrt = 0xF,
+}
+
+enum FpuState: bits<8> {
+    Ready,
+    DivShift,
+    DivFinalize,
+    SqrtMul1,
+    SqrtMul2,
+    SqrtSub,
+    SqrtMul3,
+    SqrtFinalize,
+}
+
+const QNAN = 0x7FC00000;
+const INF = 0x7F800000;
+
+mod Fpu (
+    in sig lhs: bits<32>,
+    in sig rhs: bits<32>,
+    out reg result: bits<32>,
+
+    in sig op: FpuOp,
+    in sig start: bool,
+    out sig ready: bool,
+
+    in sig enable: bool,
+    in sig reset: bool,
+    in sig clk: bit,
+) {
+    sig THREE: Float;
+    comb {
+        THREE = Float {
+            sign: false,
+            exponent: 1,
+            mantissa: 0b1100_0000_0000_0000_0000_0000,
+        };
+    }
+
+    let classify_lhs: FloatClassify;
+    let classify_rhs: FloatClassify;
+    sig lhs_class: FloatClass;
+    sig rhs_class: FloatClass;
+    comb {
+        classify_lhs.value = lhs;
+        classify_rhs.value = rhs;
+        lhs_class = classify_lhs.class;
+        rhs_class = classify_rhs.class;
+    }
+
+    let unpack_lhs: FloatUnpack;
+    let unpack_rhs: FloatUnpack;
+    sig lhs_float: Float;
+    sig rhs_float: Float;
+    comb {
+        unpack_lhs.raw = lhs;
+        unpack_rhs.raw = rhs;
+        lhs_float = unpack_lhs.float;
+        rhs_float = unpack_rhs.float;
+    }
+
+    let unpack_rsqrt_approx: FloatUnpack;
+    sig rsqrt_approx: Float;
+    comb {
+        unpack_rsqrt_approx.raw = 0x5F375A86 - (lhs >> 1);
+        rsqrt_approx = unpack_rsqrt_approx.float;
+    }
+
+    reg counter: bits<5>;
+    sig next_counter: bits<5>;
+    proc rising(clk) {
+        if enable {
+            counter = next_counter;
+        }
+    }
+
+    reg quotient: bits<25>;
+    reg remainder: bits<25>;
+    sig next_quotient: bits<25>;
+    sig next_remainder: bits<25>;
+    proc rising(clk) {
+        if enable {
+            quotient = next_quotient;
+            remainder = next_remainder;
+        }
+    }
+
+    reg b: Float;
+    reg y: Float;
+    reg x: Float;
+    sig next_b: Float;
+    sig next_y: Float;
+    sig next_x: Float;
+    proc rising(clk) {
+        if enable {
+            b = next_b;
+            y = next_y;
+            x = next_x;
+        }
+    }
+
+    sig next_result: bits<32>;
+    proc rising(clk) {
+        if enable {
+            result = next_result;
+        }
+    }
+
+    reg state: FpuState;
+    sig next_state: FpuState;
+    proc rising(clk) {
+        if reset {
+            state = FpuState::Ready;
+        } else if enable {
+            state = next_state;
+        }
+    }
+
+    comb {
+        ready = state == FpuState::Ready;
+    }
+
+    let add: FloatAdd;
+    let mul: FloatMul;
+    let pack: FloatPack;
+
+    comb {
+        add.lhs = lhs_float;
+        add.rhs = rhs_float;
+        mul.lhs = lhs_float;
+        mul.rhs = rhs_float;
+        pack.float = add.result;
+
+        next_counter = counter;
+        next_quotient = quotient;
+        next_remainder = remainder;
+        next_b = b;
+        next_y = y;
+        next_x = x;
+        next_result = result;
+        next_state = state;
+
+        match state {
+            FpuState::Ready => {
+                if start {
+                    match op {
+                        FpuOp::Add => {
+                            add.lhs = lhs_float;
+                            add.rhs = rhs_float;
+                            pack.float = add.result;
+
+                            next_result = if (lhs_class == FloatClass::Nan) | (rhs_class == FloatClass::Nan) {
+                                QNAN
+                            } else if (lhs_class == FloatClass::Infinity) & (rhs_class == FloatClass::Infinity) {
+                                if lhs[31] == rhs[31] { lhs } else { QNAN }
+                            } else if (lhs_class == FloatClass::Zero) & (rhs_class == FloatClass::Zero) {
+                                0
+                            } else if (lhs_class == FloatClass::Infinity) | (rhs_class == FloatClass::Zero) {
+                                lhs
+                            } else if (rhs_class == FloatClass::Infinity) | (lhs_class == FloatClass::Zero) {
+                                rhs
+                            } else {
+                                pack.raw
+                            };
+                            next_state = FpuState::Ready;
+                        },
+                        FpuOp::Sub => {
+                            add.lhs = lhs_float;
+                            add.rhs = Float {
+                                sign: !rhs_float.sign,
+                                exponent: rhs_float.exponent,
+                                mantissa: rhs_float.mantissa,
+                            };
+                            pack.float = add.result;
+
+                            next_result = if (lhs_class == FloatClass::Nan) | (rhs_class == FloatClass::Nan) {
+                                QNAN
+                            } else if (lhs_class == FloatClass::Infinity) & (rhs_class == FloatClass::Infinity) {
+                                if lhs[31] != rhs[31] { lhs } else { QNAN }
+                            } else if (lhs_class == FloatClass::Zero) & (rhs_class == FloatClass::Zero) {
+                                0
+                            } else if (lhs_class == FloatClass::Infinity) | (rhs_class == FloatClass::Zero) {
+                                lhs
+                            } else if (rhs_class == FloatClass::Infinity) | (lhs_class == FloatClass::Zero) {
+                                rhs ^ 0x80000000
+                            } else {
+                                pack.raw
+                            };
+                            next_state = FpuState::Ready;
+                        },
+                        FpuOp::Mul => {
+                            mul.lhs = lhs_float;
+                            mul.rhs = rhs_float;
+                            pack.float = mul.result;
+
+                            next_result = if (lhs_class == FloatClass::Nan)
+                                           | (rhs_class == FloatClass::Nan)
+                                           | ((lhs_class == FloatClass::Zero) & (rhs_class == FloatClass::Infinity))
+                                           | ((lhs_class == FloatClass::Infinity) & (rhs_class == FloatClass::Zero))
+                            {
+                                QNAN
+                            } else if (lhs_class == FloatClass::Zero) | (rhs_class == FloatClass::Zero) {
+                                0
+                            } else if (lhs_class == FloatClass::Infinity) | (rhs_class == FloatClass::Infinity) {
+                                (lhs[31] ^ rhs[31]) @ (INF as bits::<31>)
+                            } else {
+                                pack.raw
+                            };
+                            next_state = FpuState::Ready;
+                        },
+                        FpuOp::Div => {
+                            if (lhs_class == FloatClass::Nan)
+                             | (rhs_class == FloatClass::Nan)
+                             | ((lhs_class == FloatClass::Zero) & (rhs_class == FloatClass::Zero))
+                             | ((lhs_class == FloatClass::Infinity) & (rhs_class == FloatClass::Infinity))
+                             | ((lhs_class == FloatClass::Zero) & (rhs_class == FloatClass::Infinity))
+                             | ((lhs_class == FloatClass::Infinity) & (rhs_class == FloatClass::Zero))
+                            {
+                                next_result = QNAN;
+                                next_state = FpuState::Ready;
+                            } else if (lhs_class == FloatClass::Infinity) | (rhs_class == FloatClass::Zero) {
+                                next_result = (lhs[31] ^ rhs[31]) @ (INF as bits::<31>);
+                                next_state = FpuState::Ready;
+                            } else if (lhs_class == FloatClass::Zero) | (rhs_class == FloatClass::Infinity) {
+                                next_result = 0;
+                                next_state = FpuState::Ready;
+                            } else {
+                                next_counter = 25;
+                                next_quotient = 0;
+                                next_remainder = lhs_float.mantissa as bits::<25>;
+                                next_state = FpuState::DivShift;
+                            }
+                        },
+                        FpuOp::Abs => {
+                            next_result = (0 as bit) @ lhs[0..31];
+                            next_state = FpuState::Ready;
+                        },
+                        FpuOp::Neg => {
+                            next_result = lhs ^ 0x80000000;
+                            next_state = FpuState::Ready;
+                        },
+                        FpuOp::Sqrt => {
+                            if lhs_class == FloatClass::Zero {
+                                next_result = 0;
+                                next_state = FpuState::Ready;
+                            } else if (lhs_class == FloatClass::Nan) | lhs_float.sign {
+                                next_result = QNAN;
+                                next_state = FpuState::Ready;
+                            } else if lhs_class == FloatClass::Infinity {
+                                next_result = INF;
+                                next_state = FpuState::Ready;
+                            } else {
+                                mul.lhs = lhs_float;
+                                mul.rhs = rsqrt_approx;
+
+                                next_counter = 3;
+                                next_b = lhs_float;
+                                next_y = rsqrt_approx;
+                                next_x = mul.result;
+                                next_state = FpuState::SqrtMul1;
+                            };
+                        },
+                        FpuOp::Rsqrt => {
+                            if lhs_class == FloatClass::Zero {
+                                next_result = lhs[31] @ (INF as bits::<31>);
+                                next_state = FpuState::Ready;
+                            } else if (lhs_class == FloatClass::Nan) | lhs_float.sign {
+                                next_result = QNAN;
+                                next_state = FpuState::Ready;
+                            } else if lhs_class == FloatClass::Infinity {
+                                next_result = 0;
+                                next_state = FpuState::Ready;
+                            } else {
+                                next_counter = 3;
+                                next_b = lhs_float;
+                                next_y = rsqrt_approx;
+                                next_x = rsqrt_approx;
+                                next_state = FpuState::SqrtMul1;
+                            };
+                        },
+                    }
+                }
+            },
+            FpuState::DivShift => {
+                next_counter = counter - 1;
+                if remainder >= (rhs_float.mantissa as bits::<25>) {
+                    next_quotient = quotient[0..24] @ (1 as bit);
+                    next_remainder = (remainder - (rhs_float.mantissa as bits::<25>)) << 1;
+                } else {
+                    next_quotient = quotient[0..24] @ (0 as bit);
+                    next_remainder = remainder << 1;
+                }
+                next_state = if next_counter == 0 {
+                    FpuState::DivFinalize
+                } else {
+                    FpuState::DivShift
+                };
+            },
+            FpuState::DivFinalize => {
+                pack.float = if quotient[24] {
+                    Float {
+                        sign: lhs_float.sign ^ rhs_float.sign,
+                        exponent: lhs_float.exponent - rhs_float.exponent,
+                        mantissa: quotient[1..25],
+                    }
+                } else {
+                    Float {
+                        sign: lhs_float.sign ^ rhs_float.sign,
+                        exponent: lhs_float.exponent - rhs_float.exponent - 1,
+                        mantissa: quotient[0..24],
+                    }
+                };
+
+                next_result = pack.raw;
+                next_state = FpuState::Ready;
+            },
+            FpuState::SqrtMul1 => {
+                mul.lhs = y;
+                mul.rhs = y;
+
+                next_y = mul.result;
+                next_state = FpuState::SqrtMul2;
+            },
+            FpuState::SqrtMul2 => {
+                mul.lhs = b;
+                mul.rhs = y;
+                
+                next_b = mul.result;
+                next_state = FpuState::SqrtSub;
+            },
+            FpuState::SqrtSub => {
+                add.lhs = THREE;
+                add.rhs = Float {
+                    sign: !b.sign,
+                    exponent: b.exponent,
+                    mantissa: b.mantissa,
+                };
+
+                next_y = Float {
+                    sign: add.result.sign,
+                    exponent: add.result.exponent - 1,
+                    mantissa: add.result.mantissa,
+                };
+                next_state = FpuState::SqrtMul3;
+            },
+            FpuState::SqrtMul3 => {
+                mul.lhs = x;
+                mul.rhs = y;
+                
+                next_counter = counter - 1;
+                next_x = mul.result;
+                next_state = if next_counter == 0 {
+                    FpuState::SqrtFinalize
+                } else {
+                    FpuState::SqrtMul1
+                };
+            },
+            FpuState::SqrtFinalize => {
+                pack.float = x;
+
+                next_result = pack.raw;
+                next_state = FpuState::Ready;
+            },
+        }
+    }
+}

@@ -1,0 +1,52 @@
+mod Div<BITS> (
+    in sig numerator: bits<BITS>,
+    in sig denominator: bits<BITS>,
+
+    out reg quotient: bits<BITS>,
+    out reg remainder: bits<BITS>,
+
+    in sig start: bool,
+    out reg ready: bool,
+
+    in sig enable: bool,
+    in sig reset: bool,
+    in sig clk: bit,
+) {
+    reg numerator_reg: bits<BITS>;
+
+    sig shifted_remainder: bits<BITS>;
+    comb {
+        shifted_remainder = remainder[0..(BITS-1)] @ numerator_reg[BITS - 1];
+    }
+
+    reg counter: bits<{clog2(BITS)}>;
+    sig next_counter: bits<{clog2(BITS)}>;
+    comb {
+        next_counter = counter - 1;
+    }
+
+    proc rising(clk) {
+        if reset {
+            ready = true;
+        } else if enable {
+            if start & ready {
+                numerator_reg = numerator;
+                quotient = 0;
+                remainder = 0;
+                counter = BITS - 1;
+                ready = false;
+            } else if !ready {
+                numerator_reg = numerator_reg << 1;
+                if shifted_remainder >= denominator {
+                    quotient = quotient[0..(BITS-1)] @ (1 as bit);
+                    remainder = shifted_remainder - denominator;
+                } else {
+                    quotient = quotient[0..(BITS-1)] @ (0 as bit);
+                    remainder = shifted_remainder;
+                }
+                counter = next_counter;
+                ready = counter == 0;
+            }
+        }
+    }
+}

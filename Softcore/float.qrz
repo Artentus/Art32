@@ -1,0 +1,200 @@
+struct Float {
+    sign: bit,
+    exponent: bits<10>,
+    mantissa: bits<24>,
+}
+
+enum FloatClass: bits<2> {
+    Zero,
+    Normal,
+    Infinity,
+    Nan,
+}
+
+mod FloatClassify (
+    in sig value: bits<32>,
+    out sig class: FloatClass,
+) {
+    sig e: bits<8>;
+    sig m: bits<23>;
+    comb {
+        e = value[23..31];
+        m = value[0..23];
+    }
+
+    comb {
+        class = match e {
+            0x00 => FloatClass::Zero,
+            0xFF => if m == 0 {
+                FloatClass::Infinity
+            } else {
+                FloatClass::Nan
+            },
+            _ => FloatClass::Normal,
+        };
+    }
+}
+
+mod FloatUnpack (
+    in sig raw: bits<32>,
+    out sig float: Float,
+) {
+    sig s: bit;
+    sig e: bits<8>;
+    sig m: bits<23>;
+    comb {
+        s = raw[31];
+        e = raw[23..31];
+        m = raw[0..23];
+    }
+
+    comb {
+        float = Float {
+            sign: s,
+            exponent: (e as bits::<10>) - 127,
+            mantissa: (1 as bit) @ m,
+        };
+    }
+}
+
+mod FloatPack (
+    in sig float: Float,
+    out sig raw: bits<32>,
+) {
+    sig s: bit;
+    sig full_e: bits<10>;
+    comb {
+        s = float.sign;
+        full_e = float.exponent + 127;
+    }
+
+    sig e: bits<8>;
+    sig m: bits<23>;
+    comb {
+        if full_e <=$ 0x00 {
+            e = 0x00;
+            m = 0;
+        } else if full_e >=$ 0xFF {
+            e = 0xFF;
+            m = 0;
+        } else {
+            e = full_e[0..8];
+            m = float.mantissa[0..23];
+        }
+    }
+
+    comb {
+        raw = s @ e @ m;
+    }
+}
+
+mod FloatAdd (
+    in sig lhs: Float,
+    in sig rhs: Float,
+    out sig result: Float,
+) {
+    sig swapped_lhs: Float;
+    sig swapped_rhs: Float;
+    comb {
+        if (lhs.exponent <$ rhs.exponent)
+         | ((lhs.exponent == rhs.exponent) & (lhs.mantissa < rhs.mantissa))
+        {
+            swapped_lhs = rhs;
+            swapped_rhs = lhs;
+        } else {
+            swapped_lhs = lhs;
+            swapped_rhs = rhs;
+        }
+    }
+
+    sig rhs_shift: bits<10>;
+    comb {
+        rhs_shift = swapped_lhs.exponent - swapped_rhs.exponent;
+    }
+
+    sig lhs_mant: bits<26>;
+    sig rhs_mant: bits<26>;
+    comb {
+        lhs_mant = (0 as bit) @ swapped_lhs.mantissa @ (0 as bit);
+        rhs_mant = if rhs_shift <= 24 {
+            ((0 as bit) @ swapped_rhs.mantissa @ (0 as bit)) >> (rhs_shift as bits::<26>)
+        } else {
+            0
+        };
+    }
+
+    sig mantissa: bits<26>;
+    comb {
+        mantissa = if swapped_lhs.sign == swapped_rhs.sign {
+            lhs_mant + rhs_mant
+        } else {
+            lhs_mant - rhs_mant
+        };
+    }
+
+    let leading_zeros: Clz24;
+    comb {
+        leading_zeros.value = mantissa[0..24];
+    }
+
+    sig exponent: bits<10>;
+    sig shifted_mantissa: bits<24>;
+    comb {
+        if mantissa[25] {
+            exponent = swapped_lhs.exponent + 1;
+            shifted_mantissa = mantissa[2..26];
+        } else if mantissa[24] {
+            exponent = swapped_lhs.exponent;
+            shifted_mantissa = mantissa[1..25];
+        } else {
+            exponent = swapped_lhs.exponent - (leading_zeros.count as bits::<10>) - 1;
+            shifted_mantissa = mantissa[0..24] << (leading_zeros.count as bits::<24>);
+        }
+    }
+
+    comb {
+        result = Float {
+            sign: swapped_lhs.sign,
+            exponent: exponent,
+            mantissa: shifted_mantissa,
+        };
+    }
+}
+
+mod FloatMul (
+    in sig lhs: Float,
+    in sig rhs: Float,
+    out sig result: Float,
+) {
+    let mult: Mult32;
+    comb {
+        mult.lhs = lhs.mantissa as bits::<32>;
+        mult.rhs = rhs.mantissa as bits::<32>;
+        mult.op = MultOp::MulUU;
+    }
+
+    sig sign: bit;
+    sig exponent: bits<10>;
+    sig mantissa: bits<25>;
+    comb {
+        sign = lhs.sign ^ rhs.sign;
+        exponent = lhs.exponent + rhs.exponent;
+        mantissa = mult.result[23..48];
+    }
+
+    comb {
+        result = if mantissa[24] {
+            Float {
+                sign: sign,
+                exponent: exponent + 1,
+                mantissa: mantissa[1..25],
+            }
+        } else {
+            Float {
+                sign: sign,
+                exponent: exponent,
+                mantissa: mantissa[0..24],
+            }
+        };
+    }
+}

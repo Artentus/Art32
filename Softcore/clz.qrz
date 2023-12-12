@@ -1,0 +1,98 @@
+mod Clz2 (
+    in sig value: bits<2>,
+    out sig count: bits<2>,
+) {
+    comb {
+        count = match value {
+            0b00 => 2,
+            0b01 => 1,
+            0b10 => 0,
+            0b11 => 0,
+        };
+    }
+}
+
+mod Clz4 (
+    in sig value: bits<4>,
+    out sig count: bits<3>,
+) {
+    let high: Clz2;
+    let low: Clz2;
+    comb {
+        high.value = value[2..4];
+        low.value = value[0..2];
+        count = if value[2..4] == 0 {
+            (low.count as bits::<3>) + 2
+        } else {
+            (high.count as bits::<3>)
+        };
+    }
+}
+
+mod Clz8 (
+    in sig value: bits<8>,
+    out sig count: bits<4>,
+) {
+    let high: Clz4;
+    let low: Clz4;
+    comb {
+        high.value = value[4..8];
+        low.value = value[0..4];
+        count = if value[4..8] == 0 {
+            (low.count as bits::<4>) + 4
+        } else {
+            (high.count as bits::<4>)
+        };
+    }
+}
+
+mod Clz16 (
+    in sig value: bits<16>,
+    out sig count: bits<5>,
+) {
+    let high: Clz8;
+    let low: Clz8;
+    comb {
+        high.value = value[8..16];
+        low.value = value[0..8];
+        count = if value[8..16] == 0 {
+            (low.count as bits::<5>) + 8
+        } else {
+            (high.count as bits::<5>)
+        };
+    }
+}
+
+mod Clz24 (
+    in sig value: bits<24>,
+    out sig count: bits<5>,
+) {
+    let high: Clz8;
+    let low: Clz16;
+    comb {
+        high.value = value[16..24];
+        low.value = value[0..16];
+        count = if value[16..24] == 0 {
+            (low.count as bits::<5>) + 8
+        } else {
+            (high.count as bits::<5>)
+        };
+    }
+}
+
+mod Clz32 (
+    in sig value: bits<32>,
+    out sig count: bits<6>,
+) {
+    let high: Clz16;
+    let low: Clz16;
+    comb {
+        high.value = value[16..32];
+        low.value = value[0..16];
+        count = if value[16..32] == 0 {
+            (low.count as bits::<6>) + 16
+        } else {
+            (high.count as bits::<6>)
+        };
+    }
+}

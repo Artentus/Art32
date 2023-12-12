@@ -1,0 +1,38 @@
+top mod Top {
+    let lhs: InPort<32>;
+    let rhs: InPort<32>;
+    let result: OutPort<32>;
+
+    let op: InPort<4>;
+    let start: InPort<1>;
+    let ready: OutPort<1>;
+
+    let enable: InPort<1>;
+    let reset: InPort<1>;
+    let clk: InPort<1>;
+
+    let fpu: Fpu;
+    comb {
+        fpu.lhs = lhs.d_in;
+        fpu.rhs = rhs.d_in;
+        result.d_out = fpu.result;
+
+        fpu.op = match op.d_in {
+            0x0 => FpuOp::Add,
+            0x1 => FpuOp::Sub,
+            0x2 => FpuOp::Mul,
+            0x3 => FpuOp::Div,
+            0xC => FpuOp::Abs,
+            0xD => FpuOp::Neg,
+            0xE => FpuOp::Sqrt,
+            0xF => FpuOp::Rsqrt,
+            _ => FpuOp::Add,
+        };
+        fpu.start = start.d_in;
+        ready.d_out = fpu.ready;
+
+        fpu.enable = enable.d_in;
+        fpu.reset = reset.d_in;
+        fpu.clk = clk.d_in;
+    }
+}
