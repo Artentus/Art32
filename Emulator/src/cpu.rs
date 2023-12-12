@@ -888,7 +888,7 @@ impl Cpu {
             0b000 /* ffloor */ => value.floor(),
             0b001 /* fceil */ => value.ceil(),
             0b010 /* fround */ => value.round(),
-            0b011 /* ffract */ => value.fract(),
+            0b011 /* ftrunc */ => value.trunc(),
             0b100 /* fabs */ => value.abs(),
             0b101 /* fneg */ => -value,
             0b110 /* fsqrt */ => value.sqrt(),
