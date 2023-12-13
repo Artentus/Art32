@@ -133,6 +133,22 @@ fn golden_div(lhs: f32, rhs: f32) -> f32 {
 }
 
 #[inline]
+fn golden_min(lhs: f32, rhs: f32) -> f32 {
+    let lhs = subnormal_to_zero(lhs);
+    let rhs = subnormal_to_zero(rhs);
+    let result = lhs.min(rhs);
+    subnormal_to_zero(result)
+}
+
+#[inline]
+fn golden_max(lhs: f32, rhs: f32) -> f32 {
+    let lhs = subnormal_to_zero(lhs);
+    let rhs = subnormal_to_zero(rhs);
+    let result = lhs.max(rhs);
+    subnormal_to_zero(result)
+}
+
+#[inline]
 fn golden_floor(value: f32) -> f32 {
     let value = subnormal_to_zero(value);
     let result = value.floor();
@@ -336,6 +352,16 @@ fn mul(lhs: f32, rhs: f32) {
 #[proptest(ProptestConfig { cases : 3000, ..ProptestConfig::default() })]
 fn div(lhs: f32, rhs: f32) {
     test_binary(lhs, rhs, golden_div, Op::Div, equals_ignore_rounding, 27);
+}
+
+#[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
+fn min(lhs: f32, rhs: f32) {
+    test_binary(lhs, rhs, golden_min, Op::Min, equals, 1);
+}
+
+#[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
+fn max(lhs: f32, rhs: f32) {
+    test_binary(lhs, rhs, golden_max, Op::Max, equals, 1);
 }
 
 #[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]

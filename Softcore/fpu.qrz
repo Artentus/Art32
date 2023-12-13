@@ -4,8 +4,8 @@ enum FpuOp: bits<4> {
     Mul   = 0x2,
     Div   = 0x3,
     //Rem   = 0x4,
-    //Min   = 0x6,
-    //Max   = 0x7,
+    Min   = 0x6,
+    Max   = 0x7,
     Floor = 0x8,
     Ceil  = 0x9,
     Round = 0xA,
@@ -251,6 +251,26 @@ mod Fpu (
                                 next_remainder = lhs_float.mantissa as bits::<25>;
                                 next_state = FpuState::DivShift;
                             }
+                        },
+                        FpuOp::Min => {
+                            next_result = if (lhs_class == FloatClass::Nan) | (!lhs_float.sign & rhs_float.sign) {
+                                rhs
+                            } else if (rhs_class == FloatClass::Nan) | (lhs_float.sign & !rhs_float.sign) {
+                                lhs
+                            } else {
+                                if (lhs[0..31] <= rhs[0..31]) ^ lhs_float.sign { lhs } else { rhs }
+                            };
+                            next_state = FpuState::Ready;
+                        },
+                        FpuOp::Max => {
+                            next_result = if (lhs_class == FloatClass::Nan) | (lhs_float.sign & !rhs_float.sign) {
+                                rhs
+                            } else if (rhs_class == FloatClass::Nan) | (!lhs_float.sign & rhs_float.sign) {
+                                lhs
+                            } else {
+                                if (lhs[0..31] >= rhs[0..31]) ^ lhs_float.sign { lhs } else { rhs }
+                            };
+                            next_state = FpuState::Ready;
                         },
                         FpuOp::Floor => {
                             trunc.value = lhs_float;
