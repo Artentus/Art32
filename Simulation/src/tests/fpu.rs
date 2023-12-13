@@ -34,7 +34,7 @@ enum Op {
     Floor = 0x8,
     Ceil = 0x9,
     Round = 0xA,
-    Fract = 0xB,
+    Trunc = 0xB,
     Abs = 0xC,
     Neg = 0xD,
     Sqrt = 0xE,
@@ -133,43 +133,63 @@ fn golden_div(lhs: f32, rhs: f32) -> f32 {
 }
 
 #[inline]
-fn golden_abs(lhs: f32, _rhs: f32) -> f32 {
-    let value = subnormal_to_zero(lhs);
+fn golden_floor(value: f32) -> f32 {
+    let value = subnormal_to_zero(value);
+    let result = value.floor();
+    subnormal_to_zero(result)
+}
+
+#[inline]
+fn golden_ceil(value: f32) -> f32 {
+    let value = subnormal_to_zero(value);
+    let result = value.ceil();
+    subnormal_to_zero(result)
+}
+
+#[inline]
+fn golden_round(value: f32) -> f32 {
+    let value = subnormal_to_zero(value);
+    let result = value.round();
+    subnormal_to_zero(result)
+}
+
+#[inline]
+fn golden_trunc(value: f32) -> f32 {
+    let value = subnormal_to_zero(value);
+    let result = value.trunc();
+    subnormal_to_zero(result)
+}
+
+#[inline]
+fn golden_abs(value: f32) -> f32 {
+    let value = subnormal_to_zero(value);
     let result = value.abs();
     subnormal_to_zero(result)
 }
 
 #[inline]
-fn golden_neg(lhs: f32, _rhs: f32) -> f32 {
-    let value = subnormal_to_zero(lhs);
+fn golden_neg(value: f32) -> f32 {
+    let value = subnormal_to_zero(value);
     let result = -value;
     subnormal_to_zero(result)
 }
 
 #[inline]
-fn golden_sqrt(lhs: f32, _rhs: f32) -> f32 {
-    let value = subnormal_to_zero(lhs);
+fn golden_sqrt(value: f32) -> f32 {
+    let value = subnormal_to_zero(value);
     let result = value.sqrt();
     subnormal_to_zero(result)
 }
 
 #[inline]
-fn golden_rsqrt(lhs: f32, _rhs: f32) -> f32 {
-    let value = subnormal_to_zero(lhs);
+fn golden_rsqrt(value: f32) -> f32 {
+    let value = subnormal_to_zero(value);
     let result = value.sqrt().recip();
     subnormal_to_zero(result)
 }
 
-fn test_impl(
-    lhs: f32,
-    rhs: f32,
-    golden_op: impl Fn(f32, f32) -> f32,
-    op: Op,
-    eq: impl Fn(f32, f32) -> bool,
-    max_cycle_count: u32,
-) {
-    let expected = golden_op(lhs, rhs);
-    let actual_str = FPU.with(|fpu| {
+fn test_impl(lhs: f32, rhs: f32, op: Op, max_cycle_count: u32) -> String {
+    FPU.with(|fpu| {
         let lhs = LogicState::from_int(lhs.to_bits());
         let rhs = LogicState::from_int(rhs.to_bits());
         let op = LogicState::from_int(op as u32);
@@ -232,7 +252,19 @@ fn test_impl(
 
         let result = sim.get_wire_state(fpu.result).unwrap();
         result.display_string(NonZeroU8::new(32).unwrap())
-    });
+    })
+}
+
+fn test_binary(
+    lhs: f32,
+    rhs: f32,
+    golden_op: impl Fn(f32, f32) -> f32,
+    op: Op,
+    eq: impl Fn(f32, f32) -> bool,
+    max_cycle_count: u32,
+) {
+    let expected = golden_op(lhs, rhs);
+    let actual_str = test_impl(lhs, rhs, op, max_cycle_count);
 
     if let Ok(actual) = u32::from_str_radix(&actual_str, 2) {
         let actual = f32::from_bits(actual);
@@ -256,41 +288,90 @@ fn test_impl(
     }
 }
 
+fn test_unary(
+    value: f32,
+    golden_op: impl Fn(f32) -> f32,
+    op: Op,
+    eq: impl Fn(f32, f32) -> bool,
+    max_cycle_count: u32,
+) {
+    let expected = golden_op(value);
+    let actual_str = test_impl(value, 0.0, op, max_cycle_count);
+
+    if let Ok(actual) = u32::from_str_radix(&actual_str, 2) {
+        let actual = f32::from_bits(actual);
+
+        if !eq(expected, actual) {
+            panic!(
+                "\n   value: {value:+}({})\nexpected: {expected:+}({})\n  actual: {actual:+}({})",
+                print_float(value),
+                print_float(expected),
+                print_float(actual),
+            );
+        }
+    } else {
+        panic!(
+            "\n   value: {value:+}({})\nexpected: {expected:+}({})\n  actual: {actual_str}",
+            print_float(value),
+            print_float(expected),
+        );
+    }
+}
+
 #[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
 fn add(lhs: f32, rhs: f32) {
-    test_impl(lhs, rhs, golden_add, Op::Add, equals_ignore_rounding, 1);
+    test_binary(lhs, rhs, golden_add, Op::Add, equals_ignore_rounding, 1);
 }
 
 #[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
 fn sub(lhs: f32, rhs: f32) {
-    test_impl(lhs, rhs, golden_sub, Op::Sub, equals_ignore_rounding, 1);
+    test_binary(lhs, rhs, golden_sub, Op::Sub, equals_ignore_rounding, 1);
 }
 
 #[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
 fn mul(lhs: f32, rhs: f32) {
-    test_impl(lhs, rhs, golden_mul, Op::Mul, equals_ignore_rounding, 1);
+    test_binary(lhs, rhs, golden_mul, Op::Mul, equals_ignore_rounding, 1);
 }
 
 #[proptest(ProptestConfig { cases : 3000, ..ProptestConfig::default() })]
 fn div(lhs: f32, rhs: f32) {
-    test_impl(lhs, rhs, golden_div, Op::Div, equals_ignore_rounding, 27);
+    test_binary(lhs, rhs, golden_div, Op::Div, equals_ignore_rounding, 27);
+}
+
+#[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
+fn floor(value: f32) {
+    test_unary(value, golden_floor, Op::Floor, equals, 1);
+}
+
+#[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
+fn ceil(value: f32) {
+    test_unary(value, golden_ceil, Op::Ceil, equals, 1);
+}
+
+#[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
+fn round(value: f32) {
+    test_unary(value, golden_round, Op::Round, equals, 1);
+}
+
+#[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
+fn trunc(value: f32) {
+    test_unary(value, golden_trunc, Op::Trunc, equals, 1);
 }
 
 #[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
 fn abs(value: f32) {
-    test_impl(value, 0.0, golden_abs, Op::Abs, equals, 1);
+    test_unary(value, golden_abs, Op::Abs, equals, 1);
 }
 
 #[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
 fn neg(value: f32) {
-    test_impl(value, 0.0, golden_neg, Op::Neg, equals, 1);
+    test_unary(value, golden_neg, Op::Neg, equals, 1);
 }
 
 #[proptest(ProptestConfig { cases : 5000, ..ProptestConfig::default() })]
 fn sqrt(value: f32) {
-    test_impl(
+    test_unary(
         value,
-        0.0,
         golden_sqrt,
         Op::Sqrt,
         |a, b| equals_allow_imprecision(a, b, 4),
@@ -300,9 +381,8 @@ fn sqrt(value: f32) {
 
 #[proptest(ProptestConfig { cases : 5000, ..ProptestConfig::default() })]
 fn rsqrt(value: f32) {
-    test_impl(
+    test_unary(
         value,
-        0.0,
         golden_rsqrt,
         Op::Rsqrt,
         |a, b| equals_allow_imprecision(a, b, 4),

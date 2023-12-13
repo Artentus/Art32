@@ -6,10 +6,10 @@ enum FpuOp: bits<4> {
     //Rem   = 0x4,
     //Min   = 0x6,
     //Max   = 0x7,
-    //Floor = 0x8,
-    //Ceil  = 0x9,
-    //Round = 0xA,
-    //Fract = 0xB,
+    Floor = 0x8,
+    Ceil  = 0x9,
+    Round = 0xA,
+    Trunc = 0xB,
     Abs   = 0xC,
     Neg   = 0xD,
     Sqrt  = 0xE,
@@ -137,6 +137,9 @@ mod Fpu (
 
     let add: FloatAdd;
     let mul: FloatMul;
+    let round: FloatRound;
+    let trunc: FloatTrunc;
+    let round_up: FloatRoundUp;
     let pack: FloatPack;
 
     comb {
@@ -144,6 +147,9 @@ mod Fpu (
         add.rhs = rhs_float;
         mul.lhs = lhs_float;
         mul.rhs = rhs_float;
+        round.value = lhs_float;
+        trunc.value = lhs_float;
+        round_up.value = lhs_float;
         pack.float = add.result;
 
         next_counter = counter;
@@ -245,6 +251,122 @@ mod Fpu (
                                 next_remainder = lhs_float.mantissa as bits::<25>;
                                 next_state = FpuState::DivShift;
                             }
+                        },
+                        FpuOp::Floor => {
+                            trunc.value = lhs_float;
+                            round_up.value = lhs_float;
+                            pack.float = if lhs_float.sign {
+                                round_up.result
+                            } else {
+                                trunc.result
+                            };
+
+                            next_result = match lhs_class {
+                                FloatClass::Zero => 0,
+                                FloatClass::Nan => QNAN,
+                                FloatClass::Infinity => lhs[31] @ (INF as bits::<31>),
+                                FloatClass::Normal => {
+                                    if lhs_float.sign {
+                                        if lhs_float.exponent <=$ -1 {
+                                            0xBF800000
+                                        } else if lhs_float.exponent >=$ 23 {
+                                            lhs
+                                        } else {
+                                            pack.raw
+                                        }
+                                    } else {
+                                        if lhs_float.exponent <=$ -1 {
+                                            0
+                                        } else if lhs_float.exponent >=$ 23 {
+                                            lhs
+                                        } else {
+                                            pack.raw
+                                        }
+                                    }
+                                },
+                            };
+                            next_state = FpuState::Ready;
+                        },
+                        FpuOp::Ceil => {
+                            trunc.value = lhs_float;
+                            round_up.value = lhs_float;
+                            pack.float = if lhs_float.sign {
+                                trunc.result
+                            } else {
+                                round_up.result
+                            };
+
+                            next_result = match lhs_class {
+                                FloatClass::Zero => 0,
+                                FloatClass::Nan => QNAN,
+                                FloatClass::Infinity => lhs[31] @ (INF as bits::<31>),
+                                FloatClass::Normal => {
+                                    if lhs_float.sign {
+                                        if lhs_float.exponent <=$ -1 {
+                                            0
+                                        } else if lhs_float.exponent >=$ 23 {
+                                            lhs
+                                        } else {
+                                            pack.raw
+                                        }
+                                    } else {
+                                        if lhs_float.exponent <=$ -1 {
+                                            0x3F800000
+                                        } else if lhs_float.exponent >=$ 23 {
+                                            lhs
+                                        } else {
+                                            pack.raw
+                                        }
+                                    }
+                                },
+                            };
+                            next_state = FpuState::Ready;
+                        },
+                        FpuOp::Round => {
+                            round.value = lhs_float;
+                            pack.float = round.result;
+
+                            next_result = match lhs_class {
+                                FloatClass::Zero => 0,
+                                FloatClass::Nan => QNAN,
+                                FloatClass::Infinity => lhs[31] @ (INF as bits::<31>),
+                                FloatClass::Normal => {
+                                    if lhs_float.exponent <$ -1 {
+                                        0
+                                    } else if lhs_float.exponent == -1 {
+                                        if lhs_float.mantissa[23] {
+                                            lhs[31] @ (0x3F800000 as bits::<31>)
+                                        } else {
+                                            0
+                                        }
+                                    } else if lhs_float.exponent >=$ 23 {
+                                        lhs
+                                    } else {
+                                        pack.raw
+                                    }
+                                },
+                            };
+                            next_state = FpuState::Ready;
+                        },
+                        FpuOp::Trunc => {
+                            trunc.value = lhs_float;
+                            pack.float = trunc.result;
+
+                            next_result = match lhs_class {
+                                FloatClass::Zero => 0,
+                                FloatClass::Nan => QNAN,
+                                FloatClass::Infinity => lhs[31] @ (INF as bits::<31>),
+                                FloatClass::Normal => {
+                                    if lhs_float.exponent <=$ -1 {
+                                        0
+                                    } else if lhs_float.exponent >=$ 23 {
+                                        lhs
+                                    } else {
+                                        pack.raw
+                                    }
+                                },
+                            };
+                            next_state = FpuState::Ready;
                         },
                         FpuOp::Abs => {
                             next_result = (0 as bit) @ lhs[0..31];

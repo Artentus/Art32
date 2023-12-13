@@ -198,3 +198,97 @@ mod FloatMul (
         };
     }
 }
+
+
+
+mod FloatRound (
+    in sig value: Float,
+    out sig result: Float,
+) {
+    sig shift_amount: bits<25>;
+    comb {
+        shift_amount = (22 - value.exponent) as bits::<25>;
+    }
+
+    sig shifted_mantissa: bits<25>;
+    comb {
+        shifted_mantissa = (value.mantissa as bits::<25>) >> shift_amount;
+    }
+
+    sig rounded_mantissa: bits<25>;
+    comb {
+        rounded_mantissa = shifted_mantissa + (shifted_mantissa[0] as bits::<25>);
+    }
+
+    sig unshifted_mantissa: bits<25>;
+    comb {
+        unshifted_mantissa = rounded_mantissa << shift_amount;
+    }
+
+    comb {
+        result = if unshifted_mantissa[24] {
+            Float {
+                sign: value.sign,
+                exponent: value.exponent + 1,
+                mantissa: unshifted_mantissa[1..25],
+            }
+        } else {
+            Float {
+                sign: value.sign,
+                exponent: value.exponent,
+                mantissa: unshifted_mantissa[0..24],
+            }
+        };
+    }
+}
+
+mod FloatTrunc (
+    in sig value: Float,
+    out sig result: Float,
+) {
+    sig shift_amount: bits<24>;
+    comb {
+        shift_amount = (23 - value.exponent) as bits::<24>;
+    }
+
+    comb {
+        result = Float {
+            sign: value.sign,
+            exponent: value.exponent,
+            mantissa: ((value.mantissa >> shift_amount) << shift_amount),
+        };
+    }
+}
+
+mod FloatRoundUp (
+    in sig value: Float,
+    out sig result: Float,
+) {
+    sig addend: bits<25>;
+    sig shift_amount: bits<25>;
+    comb {
+        addend = 0x7FFFFF >> (value.exponent as bits::<25>);
+        shift_amount = (23 - value.exponent) as bits::<25>;
+    }
+
+    sig mantissa: bits<25>;
+    comb {
+        mantissa = ((((value.mantissa as bits::<25>) + addend) >> shift_amount) << shift_amount);
+    }
+
+    comb {
+        result = if mantissa[24] {
+            Float {
+                sign: value.sign,
+                exponent: value.exponent + 1,
+                mantissa: mantissa[1..25],
+            }
+        } else {
+            Float {
+                sign: value.sign,
+                exponent: value.exponent,
+                mantissa: mantissa[0..24],
+            }
+        };
+    }
+}
