@@ -3,7 +3,7 @@ top mod Top {
     let rhs: InPort<32>;
     let result: OutPort<32>;
 
-    let op: InPort<4>;
+    let op: InPort<5>;
     let start: InPort<1>;
     let ready: OutPort<1>;
 
@@ -18,21 +18,27 @@ top mod Top {
         result.d_out = fpu.result;
 
         fpu.op = match op.d_in {
-            0x0 => FpuOp::Add,
-            0x1 => FpuOp::Sub,
-            0x2 => FpuOp::Mul,
-            0x3 => FpuOp::Div,
-            //0x4 => FpuOp::Rem,
-            0x6 => FpuOp::Min,
-            0x7 => FpuOp::Max,
-            0x8 => FpuOp::Floor,
-            0x9 => FpuOp::Ceil,
-            0xA => FpuOp::Round,
-            0xB => FpuOp::Trunc,
-            0xC => FpuOp::Abs,
-            0xD => FpuOp::Neg,
-            0xE => FpuOp::Sqrt,
-            0xF => FpuOp::Rsqrt,
+            0x00 => FpuOp::Add,
+            0x01 => FpuOp::Sub,
+            0x02 => FpuOp::Mul,
+            0x03 => FpuOp::Div,
+            //0x04 => FpuOp::Rem,
+            0x06 => FpuOp::Min,
+            0x07 => FpuOp::Max,
+            0x08 => FpuOp::Floor,
+            0x09 => FpuOp::Ceil,
+            0x0A => FpuOp::Round,
+            0x0B => FpuOp::Trunc,
+            0x0C => FpuOp::Abs,
+            0x0D => FpuOp::Neg,
+            0x0E => FpuOp::Sqrt,
+            0x0F => FpuOp::Rsqrt,
+            //0x10 => FpuOp::CmpEq,
+            //0x11 => FpuOp::CmpNe,
+            //0x12 => FpuOp::CmpLt,
+            //0x13 => FpuOp::CmpGe,
+            0x18 => FpuOp::FtoI,
+            0x19 => FpuOp::ItoF,
             _ => FpuOp::Add,
         };
         fpu.start = start.d_in;

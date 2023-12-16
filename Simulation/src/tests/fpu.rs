@@ -24,21 +24,27 @@ module! {
 #[derive(Debug, Clone, Copy, Arbitrary)]
 #[repr(u8)]
 enum Op {
-    Add = 0x0,
-    Sub = 0x1,
-    Mul = 0x2,
-    Div = 0x3,
-    Rem = 0x4,
-    Min = 0x6,
-    Max = 0x7,
-    Floor = 0x8,
-    Ceil = 0x9,
-    Round = 0xA,
-    Trunc = 0xB,
-    Abs = 0xC,
-    Neg = 0xD,
-    Sqrt = 0xE,
-    Rsqrt = 0xF,
+    Add = 0x00,
+    Sub = 0x01,
+    Mul = 0x02,
+    Div = 0x03,
+    Rem = 0x04,
+    Min = 0x06,
+    Max = 0x07,
+    Floor = 0x08,
+    Ceil = 0x09,
+    Round = 0x0A,
+    Trunc = 0x0B,
+    Abs = 0x0C,
+    Neg = 0x0D,
+    Sqrt = 0x0E,
+    Rsqrt = 0x0F,
+    CmpEq = 0x10,
+    CmpNe = 0x11,
+    CmpLt = 0x12,
+    CmpGe = 0x13,
+    FtoI = 0x18,
+    ItoF = 0x19,
 }
 
 fn equals_allow_imprecision(lhs: f32, rhs: f32, imprecision_range: u32) -> bool {
@@ -202,6 +208,16 @@ fn golden_rsqrt(value: f32) -> f32 {
     let value = subnormal_to_zero(value);
     let result = value.sqrt().recip();
     subnormal_to_zero(result)
+}
+
+#[inline]
+fn golden_ftoi(value: f32) -> i32 {
+    value as i32
+}
+
+#[inline]
+fn golden_itof(value: i32) -> f32 {
+    value as f32
 }
 
 fn test_impl(lhs: f32, rhs: f32, op: Op, max_cycle_count: u32) -> String {
@@ -414,4 +430,49 @@ fn rsqrt(value: f32) {
         |a, b| equals_allow_imprecision(a, b, 4),
         14,
     );
+}
+
+#[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
+fn itof(value: i32) {
+    let expected = golden_itof(value);
+    let actual_str = test_impl(f32::from_bits(value as u32), 0.0, Op::ItoF, 1);
+
+    if let Ok(actual) = u32::from_str_radix(&actual_str, 2) {
+        let actual = f32::from_bits(actual);
+
+        if !equals_ignore_rounding(expected, actual) {
+            panic!(
+                "\n   value: {value:+}\nexpected: {expected:+}({})\n  actual: {actual:+}({})",
+                print_float(expected),
+                print_float(actual),
+            );
+        }
+    } else {
+        panic!(
+            "\n   value: {value:+}\nexpected: {expected:+}({})\n  actual: {actual_str}",
+            print_float(expected),
+        );
+    }
+}
+
+#[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
+fn ftoi(value: f32) {
+    let expected = golden_ftoi(value);
+    let actual_str = test_impl(value, 0.0, Op::FtoI, 1);
+
+    if let Ok(actual) = u32::from_str_radix(&actual_str, 2) {
+        let actual = actual as i32;
+
+        if actual != expected {
+            panic!(
+                "\n   value: {value:+}({})\nexpected: {expected:+}\n  actual: {actual:+}",
+                print_float(value),
+            );
+        }
+    } else {
+        panic!(
+            "\n   value: {value:+}({})\nexpected: {expected:+}\n  actual: {actual_str}",
+            print_float(value),
+        );
+    }
 }

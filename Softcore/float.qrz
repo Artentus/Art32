@@ -292,3 +292,55 @@ mod FloatRoundUp (
         };
     }
 }
+
+mod FloatToInt (
+    in sig value: Float,
+    out sig result: bits<32>,
+) {
+    sig abs: bits<32>;
+    comb {
+        abs = if value.exponent <=$ 23 {
+            (value.mantissa as bits::<32>) >> ((23 - value.exponent) as bits::<32>)
+        } else {
+            (value.mantissa as bits::<32>) << ((value.exponent - 23) as bits::<32>)
+        };
+    }
+
+    comb {
+        result = if value.sign { -abs } else { abs };
+    }
+}
+
+mod IntToFloat (
+    in sig value: bits<32>,
+    out sig result: Float,
+) {
+    sig abs: bits<32>;
+    comb {
+        abs = if value[31] { -value } else { value };
+    }
+
+    let leading_zeros: Clz32;
+    comb {
+        leading_zeros.value = abs;
+    }
+
+    sig exponent: bits<10>;
+    sig mantissa: bits<24>;
+    comb {
+        exponent = 31 - (leading_zeros.count as bits::<10>);
+        mantissa = if leading_zeros.count < 8 {
+            (abs >> (8 - (leading_zeros.count as bits::<32>)))[0..24]
+        } else {
+            (abs << ((leading_zeros.count as bits::<32>) - 8))[0..24]
+        };
+    }
+
+    comb {
+        result = Float {
+            sign: value[31],
+            exponent: exponent,
+            mantissa: mantissa,
+        };
+    }
+}

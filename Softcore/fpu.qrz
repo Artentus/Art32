@@ -1,19 +1,25 @@
-enum FpuOp: bits<4> {
-    Add   = 0x0,
-    Sub   = 0x1,
-    Mul   = 0x2,
-    Div   = 0x3,
-    //Rem   = 0x4,
-    Min   = 0x6,
-    Max   = 0x7,
-    Floor = 0x8,
-    Ceil  = 0x9,
-    Round = 0xA,
-    Trunc = 0xB,
-    Abs   = 0xC,
-    Neg   = 0xD,
-    Sqrt  = 0xE,
-    Rsqrt = 0xF,
+enum FpuOp: bits<5> {
+    Add   = 0x00,
+    Sub   = 0x01,
+    Mul   = 0x02,
+    Div   = 0x03,
+    //Rem   = 0x04,
+    Min   = 0x06,
+    Max   = 0x07,
+    Floor = 0x08,
+    Ceil  = 0x09,
+    Round = 0x0A,
+    Trunc = 0x0B,
+    Abs   = 0x0C,
+    Neg   = 0x0D,
+    Sqrt  = 0x0E,
+    Rsqrt = 0x0F,
+    //CmpEq = 0x10,
+    //CmpNe = 0x11,
+    //CmpLt = 0x12,
+    //CmpGe = 0x13,
+    FtoI  = 0x18,
+    ItoF  = 0x19,
 }
 
 enum FpuState: bits<8> {
@@ -140,6 +146,8 @@ mod Fpu (
     let round: FloatRound;
     let trunc: FloatTrunc;
     let round_up: FloatRoundUp;
+    let ftoi: FloatToInt;
+    let itof: IntToFloat;
     let pack: FloatPack;
 
     comb {
@@ -150,6 +158,8 @@ mod Fpu (
         round.value = lhs_float;
         trunc.value = lhs_float;
         round_up.value = lhs_float;
+        ftoi.value = lhs_float;
+        itof.value = lhs;
         pack.float = add.result;
 
         next_counter = counter;
@@ -434,6 +444,35 @@ mod Fpu (
                                 next_x = rsqrt_approx;
                                 next_state = FpuState::SqrtMul1;
                             };
+                        },
+                        FpuOp::FtoI => {
+                            ftoi.value = lhs_float;
+
+                            next_result = match lhs_class {
+                                FloatClass::Zero | FloatClass::Nan => 0,
+                                FloatClass::Infinity => if lhs_float.sign { 0x80000000 } else { 0x7FFFFFFF },
+                                FloatClass::Normal => {
+                                    if lhs_float.exponent <$ 0 {
+                                        0
+                                    } else if lhs_float.exponent <=$ 30 {
+                                        ftoi.result
+                                    } else {
+                                        if lhs_float.sign { 0x80000000 } else { 0x7FFFFFFF }
+                                    }
+                                },
+                            };
+                            next_state = FpuState::Ready;
+                        },
+                        FpuOp::ItoF => {
+                            itof.value = lhs;
+                            pack.float = itof.result;
+
+                            next_result = if lhs == 0 {
+                                0
+                            } else {
+                                pack.raw
+                            };
+                            next_state = FpuState::Ready;
                         },
                     }
                 }
