@@ -202,8 +202,8 @@ checksum = "d2fabcfbdc87f4758337ca535fb41a6d701b65693ce38287d856d1674551ec9b"
 
 [[package]]
 name = "gsim"
-version = "1.0.8"
-source = "git+https://github.com/Artentus/gsim.git#10d49c8c6c61f5100dc695ca0b42a97f0e3fe51f"
+version = "1.1.0"
+source = "git+https://github.com/Artentus/gsim.git#3810e70c5539a351a85e3dd1d9ac9d760bc065e6"
 dependencies = [
  "ahash",
  "bounded-integer",

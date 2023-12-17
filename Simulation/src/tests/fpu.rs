@@ -211,6 +211,34 @@ fn golden_rsqrt(value: f32) -> f32 {
 }
 
 #[inline]
+fn golden_cmpeq(lhs: f32, rhs: f32) -> bool {
+    let lhs = subnormal_to_zero(lhs);
+    let rhs = subnormal_to_zero(rhs);
+    lhs == rhs
+}
+
+#[inline]
+fn golden_cmpne(lhs: f32, rhs: f32) -> bool {
+    let lhs = subnormal_to_zero(lhs);
+    let rhs = subnormal_to_zero(rhs);
+    lhs != rhs
+}
+
+#[inline]
+fn golden_cmplt(lhs: f32, rhs: f32) -> bool {
+    let lhs = subnormal_to_zero(lhs);
+    let rhs = subnormal_to_zero(rhs);
+    lhs < rhs
+}
+
+#[inline]
+fn golden_cmpge(lhs: f32, rhs: f32) -> bool {
+    let lhs = subnormal_to_zero(lhs);
+    let rhs = subnormal_to_zero(rhs);
+    lhs >= rhs
+}
+
+#[inline]
 fn golden_ftoi(value: f32) -> i32 {
     value as i32
 }
@@ -220,7 +248,7 @@ fn golden_itof(value: i32) -> f32 {
     value as f32
 }
 
-fn test_impl(lhs: f32, rhs: f32, op: Op, max_cycle_count: u32) -> String {
+fn test_impl(lhs: f32, rhs: f32, op: Op, max_cycle_count: u32) -> LogicState {
     FPU.with(|fpu| {
         let lhs = LogicState::from_int(lhs.to_bits());
         let rhs = LogicState::from_int(rhs.to_bits());
@@ -282,10 +310,11 @@ fn test_impl(lhs: f32, rhs: f32, op: Op, max_cycle_count: u32) -> String {
         //let dot_writer = std::io::BufWriter::new(dot_file);
         //sim.write_dot(dot_writer, true).unwrap();
 
-        let result = sim.get_wire_state(fpu.result).unwrap();
-        result.display_string(NonZeroU8::new(32).unwrap())
+        sim.get_wire_state(fpu.result).unwrap()
     })
 }
+
+const WIDTH_32: NonZeroU8 = unsafe { NonZeroU8::new_unchecked(32) };
 
 fn test_binary(
     lhs: f32,
@@ -296,9 +325,9 @@ fn test_binary(
     max_cycle_count: u32,
 ) {
     let expected = golden_op(lhs, rhs);
-    let actual_str = test_impl(lhs, rhs, op, max_cycle_count);
+    let actual_state = test_impl(lhs, rhs, op, max_cycle_count);
 
-    if let Ok(actual) = u32::from_str_radix(&actual_str, 2) {
+    if let Ok(actual) = actual_state.to_int(WIDTH_32) {
         let actual = f32::from_bits(actual);
 
         if !eq(expected, actual) {
@@ -312,10 +341,11 @@ fn test_binary(
         }
     } else {
         panic!(
-            "\n     lhs: {lhs:+}({})\n     rhs: {rhs:+}({})\nexpected: {expected:+}({})\n  actual: {actual_str}",
+            "\n     lhs: {lhs:+}({})\n     rhs: {rhs:+}({})\nexpected: {expected:+}({})\n  actual: {}",
             print_float(lhs),
             print_float(rhs),
             print_float(expected),
+            actual_state.display_string(WIDTH_32),
         );
     }
 }
@@ -328,9 +358,9 @@ fn test_unary(
     max_cycle_count: u32,
 ) {
     let expected = golden_op(value);
-    let actual_str = test_impl(value, 0.0, op, max_cycle_count);
+    let actual_state = test_impl(value, 0.0, op, max_cycle_count);
 
-    if let Ok(actual) = u32::from_str_radix(&actual_str, 2) {
+    if let Ok(actual) = actual_state.to_int(WIDTH_32) {
         let actual = f32::from_bits(actual);
 
         if !eq(expected, actual) {
@@ -343,9 +373,38 @@ fn test_unary(
         }
     } else {
         panic!(
-            "\n   value: {value:+}({})\nexpected: {expected:+}({})\n  actual: {actual_str}",
+            "\n   value: {value:+}({})\nexpected: {expected:+}({})\n  actual: {}",
             print_float(value),
             print_float(expected),
+            actual_state.display_string(WIDTH_32),
+        );
+    }
+}
+
+fn test_cmp(
+    lhs: f32,
+    rhs: f32,
+    golden_op: impl Fn(f32, f32) -> bool,
+    op: Op,
+    max_cycle_count: u32,
+) {
+    let expected = golden_op(lhs, rhs);
+    let actual_state = test_impl(lhs, rhs, op, max_cycle_count);
+
+    if let Ok(actual) = actual_state.to_bool() {
+        if actual != expected {
+            panic!(
+                "\n     lhs: {lhs:+}({})\n     rhs: {rhs:+}({})\nexpected: {expected}\n  actual: {actual}",
+                print_float(lhs),
+                print_float(rhs),
+            );
+        }
+    } else {
+        panic!(
+            "\n     lhs: {lhs:+}({})\n     rhs: {rhs:+}({})\nexpected: {expected}\n  actual: {}",
+            print_float(lhs),
+            print_float(rhs),
+            actual_state.display_string(NonZeroU8::MIN),
         );
     }
 }
@@ -433,11 +492,31 @@ fn rsqrt(value: f32) {
 }
 
 #[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
+fn cmpeq(lhs: f32, rhs: f32) {
+    test_cmp(lhs, rhs, golden_cmpeq, Op::CmpEq, 1)
+}
+
+#[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
+fn cmpne(lhs: f32, rhs: f32) {
+    test_cmp(lhs, rhs, golden_cmpne, Op::CmpNe, 1)
+}
+
+#[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
+fn cmplt(lhs: f32, rhs: f32) {
+    test_cmp(lhs, rhs, golden_cmplt, Op::CmpLt, 1)
+}
+
+#[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
+fn cmpge(lhs: f32, rhs: f32) {
+    test_cmp(lhs, rhs, golden_cmpge, Op::CmpGe, 1)
+}
+
+#[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
 fn itof(value: i32) {
     let expected = golden_itof(value);
-    let actual_str = test_impl(f32::from_bits(value as u32), 0.0, Op::ItoF, 1);
+    let actual_state = test_impl(f32::from_bits(value as u32), 0.0, Op::ItoF, 1);
 
-    if let Ok(actual) = u32::from_str_radix(&actual_str, 2) {
+    if let Ok(actual) = actual_state.to_int(WIDTH_32) {
         let actual = f32::from_bits(actual);
 
         if !equals_ignore_rounding(expected, actual) {
@@ -449,8 +528,9 @@ fn itof(value: i32) {
         }
     } else {
         panic!(
-            "\n   value: {value:+}\nexpected: {expected:+}({})\n  actual: {actual_str}",
+            "\n   value: {value:+}\nexpected: {expected:+}({})\n  actual: {}",
             print_float(expected),
+            actual_state.display_string(WIDTH_32),
         );
     }
 }
@@ -458,9 +538,9 @@ fn itof(value: i32) {
 #[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
 fn ftoi(value: f32) {
     let expected = golden_ftoi(value);
-    let actual_str = test_impl(value, 0.0, Op::FtoI, 1);
+    let actual_state = test_impl(value, 0.0, Op::FtoI, 1);
 
-    if let Ok(actual) = u32::from_str_radix(&actual_str, 2) {
+    if let Ok(actual) = actual_state.to_int(WIDTH_32) {
         let actual = actual as i32;
 
         if actual != expected {
@@ -471,8 +551,9 @@ fn ftoi(value: f32) {
         }
     } else {
         panic!(
-            "\n   value: {value:+}({})\nexpected: {expected:+}\n  actual: {actual_str}",
+            "\n   value: {value:+}({})\nexpected: {expected:+}\n  actual: {}",
             print_float(value),
+            actual_state.display_string(WIDTH_32),
         );
     }
 }

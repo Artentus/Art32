@@ -14,10 +14,10 @@ enum FpuOp: bits<5> {
     Neg   = 0x0D,
     Sqrt  = 0x0E,
     Rsqrt = 0x0F,
-    //CmpEq = 0x10,
-    //CmpNe = 0x11,
-    //CmpLt = 0x12,
-    //CmpGe = 0x13,
+    CmpEq = 0x10,
+    CmpNe = 0x11,
+    CmpLt = 0x12,
+    CmpGe = 0x13,
     FtoI  = 0x18,
     ItoF  = 0x19,
 }
@@ -444,6 +444,74 @@ mod Fpu (
                                 next_x = rsqrt_approx;
                                 next_state = FpuState::SqrtMul1;
                             };
+                        },
+                        FpuOp::CmpEq => {
+                            next_result = if (lhs_class == FloatClass::Zero) & (rhs_class == FloatClass::Zero) {
+                                1 as bit
+                            } else if (lhs_class == FloatClass::Normal) & (rhs_class == FloatClass::Normal) {
+                                lhs == rhs
+                            } else {
+                                0 as bit
+                            } as bits::<32>;
+                            next_state = FpuState::Ready;
+                        },
+                        FpuOp::CmpNe => {
+                            next_result = if (lhs_class == FloatClass::Zero) & (rhs_class == FloatClass::Zero) {
+                                0 as bit
+                            } else if (lhs_class == FloatClass::Normal) & (rhs_class == FloatClass::Normal) {
+                                lhs != rhs
+                            } else {
+                                1 as bit
+                            } as bits::<32>;
+                            next_state = FpuState::Ready;
+                        },
+                        FpuOp::CmpLt => {
+                            next_result = if (lhs_class == FloatClass::Zero) & (rhs_class == FloatClass::Zero) {
+                                0 as bit
+                            } else if (lhs_class == FloatClass::Infinity) & (rhs_class == FloatClass::Infinity) {
+                                lhs[31] & !rhs[31]
+                            } else if ((lhs_class == FloatClass::Normal) & (rhs_class == FloatClass::Zero))
+                                    | ((lhs_class == FloatClass::Infinity) & (rhs_class == FloatClass::Normal))
+                            {
+                                lhs[31]
+                            } else if ((lhs_class == FloatClass::Zero) & (rhs_class == FloatClass::Normal))
+                                    | ((lhs_class == FloatClass::Normal) & (rhs_class == FloatClass::Infinity))
+                            {
+                                !rhs[31]
+                            } else if (lhs_class == FloatClass::Normal) & (rhs_class == FloatClass::Normal) {
+                                if lhs_float.sign == rhs_float.sign {
+                                    (lhs[0..31] <= rhs[0..31]) ^ lhs_float.sign
+                                } else {
+                                    lhs_float.sign
+                                }
+                            } else {
+                                0 as bit
+                            } as bits::<32>;
+                            next_state = FpuState::Ready;
+                        },
+                        FpuOp::CmpGe => {
+                            next_result = if (lhs_class == FloatClass::Zero) & (rhs_class == FloatClass::Zero) {
+                                1 as bit
+                            } else if (lhs_class == FloatClass::Infinity) & (rhs_class == FloatClass::Infinity) {
+                                !lhs[31] | rhs[31]
+                            } else if ((lhs_class == FloatClass::Normal) & (rhs_class == FloatClass::Zero))
+                                    | ((lhs_class == FloatClass::Infinity) & (rhs_class == FloatClass::Normal))
+                            {
+                                !lhs[31]
+                            } else if ((lhs_class == FloatClass::Zero) & (rhs_class == FloatClass::Normal))
+                                    | ((lhs_class == FloatClass::Normal) & (rhs_class == FloatClass::Infinity))
+                            {
+                                rhs[31]
+                            } else if (lhs_class == FloatClass::Normal) & (rhs_class == FloatClass::Normal) {
+                                if lhs_float.sign == rhs_float.sign {
+                                    (lhs[0..31] >= rhs[0..31]) ^ lhs_float.sign
+                                } else {
+                                    rhs_float.sign
+                                }
+                            } else {
+                                0 as bit
+                            } as bits::<32>;
+                            next_state = FpuState::Ready;
                         },
                         FpuOp::FtoI => {
                             ftoi.value = lhs_float;
