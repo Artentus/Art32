@@ -507,6 +507,6 @@ fn rems(lhs: u32, #[strategy(1u32..)] rhs: u32, cond: Condition) {
 }
 
 #[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
-fn cond(lhs: u32, #[strategy(1u32..)] rhs: u32, cond: Condition) {
+fn cond(lhs: u32, rhs: u32, cond: Condition) {
     test(lhs, rhs, cond, golden_cond, Op::Cond, 1);
 }

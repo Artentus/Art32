@@ -22,7 +22,6 @@ top mod Top {
             0x01 => FpuOp::Sub,
             0x02 => FpuOp::Mul,
             0x03 => FpuOp::Div,
-            //0x04 => FpuOp::Rem,
             0x06 => FpuOp::Min,
             0x07 => FpuOp::Max,
             0x08 => FpuOp::Floor,

@@ -28,7 +28,6 @@ enum Op {
     Sub = 0x01,
     Mul = 0x02,
     Div = 0x03,
-    Rem = 0x04,
     Min = 0x06,
     Max = 0x07,
     Floor = 0x08,
