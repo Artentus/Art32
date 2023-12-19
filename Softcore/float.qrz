@@ -199,8 +199,6 @@ mod FloatMul (
     }
 }
 
-
-
 mod FloatRound (
     in sig value: Float,
     out sig result: Float,

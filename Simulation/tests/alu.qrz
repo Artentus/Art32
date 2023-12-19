@@ -1,0 +1,65 @@
+top mod Top {
+    let lhs: InPort<32>;
+    let rhs: InPort<32>;
+    let condition: InPort<3>;
+    let result: OutPort<32>;
+    let flags: OutPort<4>;
+
+    let op: InPort<5>;
+    let start: InPort<1>;
+    let ready: OutPort<1>;
+
+    let enable: InPort<1>;
+    let reset: InPort<1>;
+    let clk: InPort<1>;
+
+    let alu: Alu;
+    comb {
+        alu.lhs = lhs.d_in;
+        alu.rhs = rhs.d_in;
+        alu.condition = match condition.d_in {
+            0x0 => Condition::Equal,
+            0x1 => Condition::NotEqual,
+            0x2 => Condition::UnsignedLessThan,
+            0x3 => Condition::UnsignedGreaterOrEqual,
+            0x4 => Condition::SignedLessThan,
+            0x5 => Condition::SignedGreaterOrEqual,
+            0x6 => Condition::Always,
+            0x7 => Condition::Never,
+        };
+        result.d_out = alu.result;
+        flags.d_out = alu.flags.overflow
+            @ alu.flags.sign
+            @ alu.flags.zero
+            @ alu.flags.carry;
+
+        alu.op = match op.d_in {
+            0x00 => AluOp::Add,
+            0x01 => AluOp::Sub,
+            0x02 => AluOp::And,
+            0x03 => AluOp::Or,
+            0x04 => AluOp::Xor,
+            0x05 => AluOp::Shl,
+            0x06 => AluOp::Lsr,
+            0x07 => AluOp::Asr,
+            0x08 => AluOp::AddC,
+            0x09 => AluOp::SubC,
+            0x10 => AluOp::Mul,
+            0x11 => AluOp::MulHuu,
+            0x12 => AluOp::MulHss,
+            0x13 => AluOp::MulHus,
+            0x14 => AluOp::Divu,
+            0x15 => AluOp::Divs,
+            0x16 => AluOp::Remu,
+            0x17 => AluOp::Rems,
+            0x18 => AluOp::Cond,
+            _ => AluOp::Add,
+        };
+        alu.start = start.d_in;
+        ready.d_out = alu.ready;
+
+        alu.enable = enable.d_in;
+        alu.reset = reset.d_in;
+        alu.clk = clk.d_in;
+    }
+}

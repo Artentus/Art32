@@ -93,9 +93,23 @@ mod Mult32 (
         prod_hh = mult_hh.P;
     }
 
+    sig prod_lh_ext: bits<64>;
+    sig prod_hl_ext: bits<64>;
     comb {
-        result = (prod_hh @ prod_ll)
-            + ((prod_lh @ (0 as bits::<32>)) >>> 16)
-            + ((prod_hl @ (0 as bits::<32>)) >>> 16);
+        prod_lh_ext = if rhs_sign {
+            (prod_lh @ (0 as bits::<32>)) >>> 16
+        } else {
+            (0 as bits::<16>) @ prod_lh @ (0 as bits::<16>)
+        };
+
+        prod_hl_ext = if lhs_sign {
+            (prod_hl @ (0 as bits::<32>)) >>> 16
+        } else {
+            (0 as bits::<16>) @ prod_hl @ (0 as bits::<16>)
+        };
+    }
+
+    comb {
+        result = (prod_hh @ prod_ll) + prod_lh_ext + prod_hl_ext;
     }
 }
