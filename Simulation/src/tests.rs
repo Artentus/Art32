@@ -1,8 +1,7 @@
 use gsim::*;
 
-//mod fetch_unit;
-//mod program_counter;
 mod alu;
+mod fetch_unit;
 mod fpu;
 
 const MAX_SIM_STEPS: u64 = 1_000_000;

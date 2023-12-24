@@ -61,7 +61,7 @@ mod FetchUnit (
                         program_counter + 2
                     }
                 } else {
-                    0
+                    program_counter
                 };
 
                 match valid_half_words {
@@ -86,12 +86,12 @@ mod FetchUnit (
                         }
                     },
                     2 => {
-                        request_instruction_data = true;
-
                         if instruction_16bit {
+                            request_instruction_data = true;
                             next_valid_half_words = 3;
                             next_instruction_buffer = instruction_data @ instruction_buffer[16..32];
                         } else {
+                            request_instruction_data = true;
                             next_valid_half_words = 2;
                             next_instruction_buffer = (0 as bits::<16>) @ instruction_data;
                         }
