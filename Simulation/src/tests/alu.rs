@@ -9,12 +9,14 @@ module! {
     ALU: Alu = "alu" {
         in lhs,
         in rhs,
-        in condition,
-        out result,
-        out flags,
 
         in op,
         in start,
+        in flags,
+        in condition,
+
+        out result,
+        out next_flags,
         out ready,
 
         in enable,
@@ -91,6 +93,16 @@ impl Flags {
             Condition::Always => true,
             Condition::Never => false,
         }
+    }
+
+    #[inline]
+    fn to_bits(&self) -> [LogicBitState; 4] {
+        [
+            LogicBitState::from_bool(self.overflow),
+            LogicBitState::from_bool(self.sign),
+            LogicBitState::from_bool(self.zero),
+            LogicBitState::from_bool(self.carry),
+        ]
     }
 }
 
@@ -287,13 +299,15 @@ fn golden_cond(lhs: u32, rhs: u32, flags: Flags, cond: Condition) -> (u32, Flags
 fn test_impl(
     lhs: u32,
     rhs: u32,
+    flags: Flags,
     cond: Condition,
     op: Op,
     max_cycle_count: u32,
-) -> (LogicState, LogicState, Flags) {
+) -> (LogicState, LogicState) {
     ALU.with(|alu| {
         let lhs = LogicState::from_int(lhs);
         let rhs = LogicState::from_int(rhs);
+        let mut flags = LogicState::from_bits(&flags.to_bits()).unwrap();
         let cond = LogicState::from_int(cond as u32);
         let op = LogicState::from_int(op as u32);
 
@@ -302,6 +316,7 @@ fn test_impl(
 
         sim.set_wire_drive(alu.lhs, &lhs).unwrap();
         sim.set_wire_drive(alu.rhs, &rhs).unwrap();
+        sim.set_wire_drive(alu.flags, &flags).unwrap();
         sim.set_wire_drive(alu.condition, &cond).unwrap();
         sim.set_wire_drive(alu.op, &op).unwrap();
         sim.set_wire_drive(alu.enable, &LogicState::LOGIC_1)
@@ -311,28 +326,25 @@ fn test_impl(
         sim.set_wire_drive(alu.clk, &LogicState::LOGIC_0).unwrap();
         sim.run_sim(MAX_SIM_STEPS).unwrap();
 
-        let old_flags = sim.get_wire_state(alu.flags).unwrap();
-        let old_flags = old_flags.to_int(WIDTH_4).unwrap();
-        let old_flags = Flags::parse(old_flags);
-
         sim.set_wire_drive(alu.reset, &LogicState::LOGIC_1).unwrap();
         sim.run_sim(MAX_SIM_STEPS).unwrap();
         sim.set_wire_drive(alu.clk, &LogicState::LOGIC_1).unwrap();
         sim.run_sim(MAX_SIM_STEPS).unwrap();
         sim.set_wire_drive(alu.clk, &LogicState::LOGIC_0).unwrap();
-        sim.set_wire_drive(alu.reset, &LogicState::LOGIC_0).unwrap();
         sim.run_sim(MAX_SIM_STEPS).unwrap();
 
+        sim.set_wire_drive(alu.reset, &LogicState::LOGIC_0).unwrap();
         sim.set_wire_drive(alu.start, &LogicState::LOGIC_1).unwrap();
         sim.run_sim(MAX_SIM_STEPS).unwrap();
         sim.set_wire_drive(alu.clk, &LogicState::LOGIC_1).unwrap();
         sim.run_sim(MAX_SIM_STEPS).unwrap();
         sim.set_wire_drive(alu.clk, &LogicState::LOGIC_0).unwrap();
-        sim.set_wire_drive(alu.start, &LogicState::LOGIC_0).unwrap();
         sim.run_sim(MAX_SIM_STEPS).unwrap();
 
         let mut cycle_count = 1;
         loop {
+            flags = sim.get_wire_state(alu.next_flags).unwrap();
+
             let ready = sim.get_wire_state(alu.ready).unwrap().get_bit_state(0);
             match ready {
                 LogicBitState::HighZ | LogicBitState::Undefined => {
@@ -344,6 +356,7 @@ fn test_impl(
 
             sim.set_wire_drive(alu.clk, &LogicState::LOGIC_1).unwrap();
             sim.run_sim(MAX_SIM_STEPS).unwrap();
+            sim.set_wire_drive(alu.flags, &flags).unwrap();
             sim.set_wire_drive(alu.clk, &LogicState::LOGIC_0).unwrap();
             sim.run_sim(MAX_SIM_STEPS).unwrap();
 
@@ -358,11 +371,7 @@ fn test_impl(
         //let dot_writer = std::io::BufWriter::new(dot_file);
         //sim.write_dot(dot_writer, true).unwrap();
 
-        (
-            sim.get_wire_state(alu.result).unwrap(),
-            sim.get_wire_state(alu.flags).unwrap(),
-            old_flags,
-        )
+        (sim.get_wire_state(alu.result).unwrap(), flags)
     })
 }
 
@@ -372,14 +381,15 @@ const WIDTH_4: NonZeroU8 = unsafe { NonZeroU8::new_unchecked(4) };
 fn test(
     lhs: u32,
     rhs: u32,
+    flags: Flags,
     cond: Condition,
     golden_op: impl Fn(u32, u32, Flags, Condition) -> (u32, Flags),
     op: Op,
     max_cycle_count: u32,
 ) {
-    let (actual_result_state, actual_flags_state, old_flags) =
-        test_impl(lhs, rhs, cond, op, max_cycle_count);
-    let (expected_result, expected_flags) = golden_op(lhs, rhs, old_flags, cond);
+    let (expected_result, expected_flags) = golden_op(lhs, rhs, flags, cond);
+    let (actual_result_state, actual_flags_state) =
+        test_impl(lhs, rhs, flags, cond, op, max_cycle_count);
 
     let actual_result = actual_result_state.to_int(WIDTH_32);
     let actual_flags = actual_flags_state.to_int(WIDTH_4);
@@ -389,12 +399,12 @@ fn test(
             let actual_flags = Flags::parse(actual_flags);
 
             if (actual_result != expected_result) || (actual_flags != expected_flags) {
-                panic!("\n     lhs: {lhs}\n     rhs: {rhs}\n   flags: {old_flags}\nexpected: {expected_result} [{expected_flags}]\n  actual: {actual_result} [{actual_flags}]");
+                panic!("\n     lhs: {lhs}\n     rhs: {rhs}\n   flags: {flags}\nexpected: {expected_result} [{expected_flags}]\n  actual: {actual_result} [{actual_flags}]");
             }
         }
         (Ok(actual_result), Err(_)) => {
             panic!(
-                "\n     lhs: {lhs}\n     rhs: {rhs}\n   flags: {old_flags}\nexpected: {expected_result} [{expected_flags}]\n  actual: {actual_result} [{}]",
+                "\n     lhs: {lhs}\n     rhs: {rhs}\n   flags: {flags}\nexpected: {expected_result} [{expected_flags}]\n  actual: {actual_result} [{}]",
                 actual_flags_state.display_string(WIDTH_4),
             );
         }
@@ -402,13 +412,13 @@ fn test(
             let actual_flags = Flags::parse(actual_flags);
 
             panic!(
-                "\n     lhs: {lhs}\n     rhs: {rhs}\n   flags: {old_flags}\nexpected: {expected_result} [{expected_flags}]\n  actual: {} [{actual_flags}]",
+                "\n     lhs: {lhs}\n     rhs: {rhs}\n   flags: {flags}\nexpected: {expected_result} [{expected_flags}]\n  actual: {} [{actual_flags}]",
                 actual_result_state.display_string(WIDTH_32),
             );
         }
         (Err(_), Err(_)) => {
             panic!(
-                "\n     lhs: {lhs}\n     rhs: {rhs}\n   flags: {old_flags}\nexpected: {expected_result} [{expected_flags}]\n  actual: {} [{}]",
+                "\n     lhs: {lhs}\n     rhs: {rhs}\n   flags: {flags}\nexpected: {expected_result} [{expected_flags}]\n  actual: {} [{}]",
                 actual_result_state.display_string(WIDTH_32),
                 actual_flags_state.display_string(WIDTH_4),
             );
@@ -417,96 +427,96 @@ fn test(
 }
 
 #[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
-fn add(lhs: u32, rhs: u32, cond: Condition) {
-    test(lhs, rhs, cond, golden_add, Op::Add, 1);
+fn add(lhs: u32, rhs: u32, flags: Flags, cond: Condition) {
+    test(lhs, rhs, flags, cond, golden_add, Op::Add, 1);
 }
 
 #[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
-fn sub(lhs: u32, rhs: u32, cond: Condition) {
-    test(lhs, rhs, cond, golden_sub, Op::Sub, 1);
+fn sub(lhs: u32, rhs: u32, flags: Flags, cond: Condition) {
+    test(lhs, rhs, flags, cond, golden_sub, Op::Sub, 1);
 }
 
 #[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
-fn addc(lhs: u32, rhs: u32, cond: Condition) {
-    test(lhs, rhs, cond, golden_addc, Op::AddC, 1);
+fn addc(lhs: u32, rhs: u32, flags: Flags, cond: Condition) {
+    test(lhs, rhs, flags, cond, golden_addc, Op::AddC, 1);
 }
 
 #[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
-fn subc(lhs: u32, rhs: u32, cond: Condition) {
-    test(lhs, rhs, cond, golden_subc, Op::SubC, 1);
+fn subc(lhs: u32, rhs: u32, flags: Flags, cond: Condition) {
+    test(lhs, rhs, flags, cond, golden_subc, Op::SubC, 1);
 }
 
 #[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
-fn and(lhs: u32, rhs: u32, cond: Condition) {
-    test(lhs, rhs, cond, golden_and, Op::And, 1);
+fn and(lhs: u32, rhs: u32, flags: Flags, cond: Condition) {
+    test(lhs, rhs, flags, cond, golden_and, Op::And, 1);
 }
 
 #[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
-fn or(lhs: u32, rhs: u32, cond: Condition) {
-    test(lhs, rhs, cond, golden_or, Op::Or, 1);
+fn or(lhs: u32, rhs: u32, flags: Flags, cond: Condition) {
+    test(lhs, rhs, flags, cond, golden_or, Op::Or, 1);
 }
 
 #[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
-fn xor(lhs: u32, rhs: u32, cond: Condition) {
-    test(lhs, rhs, cond, golden_xor, Op::Xor, 1);
+fn xor(lhs: u32, rhs: u32, flags: Flags, cond: Condition) {
+    test(lhs, rhs, flags, cond, golden_xor, Op::Xor, 1);
 }
 
 #[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
-fn shl(lhs: u32, rhs: u32, cond: Condition) {
-    test(lhs, rhs, cond, golden_shl, Op::Shl, 1);
+fn shl(lhs: u32, rhs: u32, flags: Flags, cond: Condition) {
+    test(lhs, rhs, flags, cond, golden_shl, Op::Shl, 1);
 }
 
 #[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
-fn lsr(lhs: u32, rhs: u32, cond: Condition) {
-    test(lhs, rhs, cond, golden_lsr, Op::Lsr, 1);
+fn lsr(lhs: u32, rhs: u32, flags: Flags, cond: Condition) {
+    test(lhs, rhs, flags, cond, golden_lsr, Op::Lsr, 1);
 }
 
 #[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
-fn asr(lhs: u32, rhs: u32, cond: Condition) {
-    test(lhs, rhs, cond, golden_asr, Op::Asr, 1);
+fn asr(lhs: u32, rhs: u32, flags: Flags, cond: Condition) {
+    test(lhs, rhs, flags, cond, golden_asr, Op::Asr, 1);
 }
 
 #[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
-fn mul(lhs: u32, rhs: u32, cond: Condition) {
-    test(lhs, rhs, cond, golden_mul, Op::Mul, 1);
+fn mul(lhs: u32, rhs: u32, flags: Flags, cond: Condition) {
+    test(lhs, rhs, flags, cond, golden_mul, Op::Mul, 1);
 }
 
 #[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
-fn mulhuu(lhs: u32, rhs: u32, cond: Condition) {
-    test(lhs, rhs, cond, golden_mulhuu, Op::MulHuu, 1);
+fn mulhuu(lhs: u32, rhs: u32, flags: Flags, cond: Condition) {
+    test(lhs, rhs, flags, cond, golden_mulhuu, Op::MulHuu, 1);
 }
 
 #[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
-fn mulhss(lhs: u32, rhs: u32, cond: Condition) {
-    test(lhs, rhs, cond, golden_mulhss, Op::MulHss, 1);
+fn mulhss(lhs: u32, rhs: u32, flags: Flags, cond: Condition) {
+    test(lhs, rhs, flags, cond, golden_mulhss, Op::MulHss, 1);
 }
 
 #[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
-fn mulhus(lhs: u32, rhs: u32, cond: Condition) {
-    test(lhs, rhs, cond, golden_mulhus, Op::MulHus, 1);
+fn mulhus(lhs: u32, rhs: u32, flags: Flags, cond: Condition) {
+    test(lhs, rhs, flags, cond, golden_mulhus, Op::MulHus, 1);
 }
 
 #[proptest(ProptestConfig { cases : 2000, ..ProptestConfig::default() })]
-fn divu(lhs: u32, #[strategy(1u32..)] rhs: u32, cond: Condition) {
-    test(lhs, rhs, cond, golden_divu, Op::Divu, 34);
+fn divu(lhs: u32, #[strategy(1u32..)] rhs: u32, flags: Flags, cond: Condition) {
+    test(lhs, rhs, flags, cond, golden_divu, Op::Divu, 34);
 }
 
 #[proptest(ProptestConfig { cases : 2000, ..ProptestConfig::default() })]
-fn divs(lhs: u32, #[strategy(1u32..)] rhs: u32, cond: Condition) {
-    test(lhs, rhs, cond, golden_divs, Op::Divs, 34);
+fn divs(lhs: u32, #[strategy(1u32..)] rhs: u32, flags: Flags, cond: Condition) {
+    test(lhs, rhs, flags, cond, golden_divs, Op::Divs, 34);
 }
 
 #[proptest(ProptestConfig { cases : 2000, ..ProptestConfig::default() })]
-fn remu(lhs: u32, #[strategy(1u32..)] rhs: u32, cond: Condition) {
-    test(lhs, rhs, cond, golden_remu, Op::Remu, 34);
+fn remu(lhs: u32, #[strategy(1u32..)] rhs: u32, flags: Flags, cond: Condition) {
+    test(lhs, rhs, flags, cond, golden_remu, Op::Remu, 34);
 }
 
 #[proptest(ProptestConfig { cases : 2000, ..ProptestConfig::default() })]
-fn rems(lhs: u32, #[strategy(1u32..)] rhs: u32, cond: Condition) {
-    test(lhs, rhs, cond, golden_rems, Op::Rems, 34);
+fn rems(lhs: u32, #[strategy(1u32..)] rhs: u32, flags: Flags, cond: Condition) {
+    test(lhs, rhs, flags, cond, golden_rems, Op::Rems, 34);
 }
 
 #[proptest(ProptestConfig { cases : 10000, ..ProptestConfig::default() })]
-fn cond(lhs: u32, rhs: u32, cond: Condition) {
-    test(lhs, rhs, cond, golden_cond, Op::Cond, 1);
+fn cond(lhs: u32, rhs: u32, flags: Flags, cond: Condition) {
+    test(lhs, rhs, flags, cond, golden_cond, Op::Cond, 1);
 }

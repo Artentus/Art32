@@ -1,12 +1,14 @@
 top mod Top {
     let lhs: InPort<32>;
     let rhs: InPort<32>;
-    let condition: InPort<3>;
-    let result: OutPort<32>;
-    let flags: OutPort<4>;
 
     let op: InPort<5>;
     let start: InPort<1>;
+    let flags: InPort<4>;
+    let condition: InPort<3>;
+
+    let result: OutPort<32>;
+    let next_flags: OutPort<4>;
     let ready: OutPort<1>;
 
     let enable: InPort<1>;
@@ -17,21 +19,6 @@ top mod Top {
     comb {
         alu.lhs = lhs.d_in;
         alu.rhs = rhs.d_in;
-        alu.condition = match condition.d_in {
-            0x0 => Condition::Equal,
-            0x1 => Condition::NotEqual,
-            0x2 => Condition::UnsignedLessThan,
-            0x3 => Condition::UnsignedGreaterOrEqual,
-            0x4 => Condition::SignedLessThan,
-            0x5 => Condition::SignedGreaterOrEqual,
-            0x6 => Condition::Always,
-            0x7 => Condition::Never,
-        };
-        result.d_out = alu.result;
-        flags.d_out = alu.flags.overflow
-            @ alu.flags.sign
-            @ alu.flags.zero
-            @ alu.flags.carry;
 
         alu.op = match op.d_in {
             0x00 => AluOp::Add,
@@ -56,6 +43,28 @@ top mod Top {
             _ => AluOp::Add,
         };
         alu.start = start.d_in;
+        alu.flags = Flags {
+            carry: flags.d_in[0],
+            zero: flags.d_in[1],
+            sign: flags.d_in[2],
+            overflow: flags.d_in[3],
+        };
+        alu.condition = match condition.d_in {
+            0x0 => Condition::Equal,
+            0x1 => Condition::NotEqual,
+            0x2 => Condition::UnsignedLessThan,
+            0x3 => Condition::UnsignedGreaterOrEqual,
+            0x4 => Condition::SignedLessThan,
+            0x5 => Condition::SignedGreaterOrEqual,
+            0x6 => Condition::Always,
+            0x7 => Condition::Never,
+        };
+
+        result.d_out = alu.result;
+        next_flags.d_out = alu.next_flags.overflow
+                         @ alu.next_flags.sign
+                         @ alu.next_flags.zero
+                         @ alu.next_flags.carry;
         ready.d_out = alu.ready;
 
         alu.enable = enable.d_in;

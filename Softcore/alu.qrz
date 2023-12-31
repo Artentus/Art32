@@ -29,12 +29,14 @@ enum AluState: bits<8> {
 mod Alu (
     in sig lhs: bits<32>,
     in sig rhs: bits<32>,
-    in sig condition: Condition,
-    out reg result: bits<32>,
-    out reg flags: Flags,
-
+    
     in sig op: AluOp,
     in sig start: bool,
+    in sig flags: Flags,
+    in sig condition: Condition,
+
+    out reg result: bits<32>,
+    out sig next_flags: Flags,
     out sig ready: bool,
 
     in sig enable: bool,
@@ -73,13 +75,6 @@ mod Alu (
         }
     }
 
-    sig next_flags: Flags;
-    proc rising(clk) {
-        if enable {
-            flags = next_flags;
-        }
-    }
-
     reg state: AluState;
     sig next_state: AluState;
     proc rising(clk) {
@@ -113,6 +108,21 @@ mod Alu (
         cond.condition = condition;
     }
 
+    sig and_result: bits<32>;
+    sig or_result: bits<32>;
+    sig xor_result: bits<32>;
+    sig shl_result: bits<32>;
+    sig lsr_result: bits<32>;
+    sig asr_result: bits<32>;
+    comb {
+        and_result = lhs & rhs;
+        or_result = lhs | rhs;
+        xor_result = lhs ^ rhs;
+        shl_result = lhs << rhs;
+        lsr_result = lhs >> rhs;
+        asr_result = lhs >>> rhs;
+    }
+
     comb {
         add.op = AdderOp::Add;
         mul.op = MultOp::MulUU;
@@ -136,7 +146,7 @@ mod Alu (
                             next_result = add.result;
                             next_flags = Flags {
                                 carry: add.carry_out,
-                                zero: next_result == 0,
+                                zero: add.result == 0,
                                 sign: add.sign,
                                 overflow: add.overflow,
                             };
@@ -148,40 +158,40 @@ mod Alu (
                             next_result = add.result;
                             next_flags = Flags {
                                 carry: add.carry_out,
-                                zero: next_result == 0,
+                                zero: add.result == 0,
                                 sign: add.sign,
                                 overflow: add.overflow,
                             };
                             next_state = AluState::Ready;
                         },
                         AluOp::And => {
-                            next_result = lhs & rhs;
-                            next_flags.zero = next_result == 0;
+                            next_result = and_result;
+                            next_flags.zero = and_result == 0;
                             next_state = AluState::Ready;
                         },
                         AluOp::Or => {
-                            next_result = lhs | rhs;
-                            next_flags.zero = next_result == 0;
+                            next_result = or_result;
+                            next_flags.zero = or_result == 0;
                             next_state = AluState::Ready;
                         },
                         AluOp::Xor => {
-                            next_result = lhs ^ rhs;
-                            next_flags.zero = next_result == 0;
+                            next_result = xor_result;
+                            next_flags.zero = xor_result == 0;
                             next_state = AluState::Ready;
                         },
                         AluOp::Shl => {
-                            next_result = lhs << rhs;
-                            next_flags.zero = next_result == 0;
+                            next_result = shl_result;
+                            next_flags.zero = shl_result == 0;
                             next_state = AluState::Ready;
                         },
                         AluOp::Lsr => {
-                            next_result = lhs >> rhs;
-                            next_flags.zero = next_result == 0;
+                            next_result = lsr_result;
+                            next_flags.zero = lsr_result == 0;
                             next_state = AluState::Ready;
                         },
                         AluOp::Asr => {
-                            next_result = lhs >>> rhs;
-                            next_flags.zero = next_result == 0;
+                            next_result = asr_result;
+                            next_flags.zero = asr_result == 0;
                             next_state = AluState::Ready;
                         },
                         AluOp::AddC => {
@@ -190,7 +200,7 @@ mod Alu (
                             next_result = add.result;
                             next_flags = Flags {
                                 carry: add.carry_out,
-                                zero: (next_result == 0) & flags.zero,
+                                zero: (add.result == 0) & flags.zero,
                                 sign: add.sign,
                                 overflow: add.overflow,
                             };
@@ -202,7 +212,7 @@ mod Alu (
                             next_result = add.result;
                             next_flags = Flags {
                                 carry: add.carry_out,
-                                zero: (next_result == 0) & flags.zero,
+                                zero: (add.result == 0) & flags.zero,
                                 sign: add.sign,
                                 overflow: add.overflow,
                             };
@@ -212,28 +222,28 @@ mod Alu (
                             mul.op = MultOp::MulUU;
 
                             next_result = mul.result[0..32];
-                            next_flags.zero = next_result == 0;
+                            next_flags.zero = mul.result[0..32] == 0;
                             next_state = AluState::Ready;
                         },
                         AluOp::MulHuu => {
                             mul.op = MultOp::MulUU;
 
                             next_result = mul.result[32..64];
-                            next_flags.zero = (next_result == 0) & flags.zero;
+                            next_flags.zero = (mul.result[32..64] == 0) & flags.zero;
                             next_state = AluState::Ready;
                         },
                         AluOp::MulHss => {
                             mul.op = MultOp::MulSS;
 
                             next_result = mul.result[32..64];
-                            next_flags.zero = (next_result == 0) & flags.zero;
+                            next_flags.zero = (mul.result[32..64] == 0) & flags.zero;
                             next_state = AluState::Ready;
                         },
                         AluOp::MulHus => {
                             mul.op = MultOp::MulUS;
 
                             next_result = mul.result[32..64];
-                            next_flags.zero = (next_result == 0) & flags.zero;
+                            next_flags.zero = (mul.result[32..64] == 0) & flags.zero;
                             next_state = AluState::Ready;
                         },
                         AluOp::Divu | AluOp::Remu => {
