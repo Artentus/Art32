@@ -52,37 +52,53 @@ fn main() {
         #[cfg(target_os = "windows")]
         let mut quartz_cmd = Command::new("./quartz.exe");
 
-        let quartz_output = quartz_cmd
+        quartz_cmd
             .arg("-o")
             .arg(&sv_file)
             .arg(test_file.to_str().unwrap())
-            .args(&quartz_files)
-            .output()
-            .unwrap();
+            .args(&quartz_files);
 
-        println!("{}", String::from_utf8_lossy(&quartz_output.stdout));
+        println!("\u{001b}[36m[RUN]\u{001b}[0m {quartz_cmd:?}");
+        let quartz_output = quartz_cmd.output().unwrap();
+
+        if quartz_output.stdout.len() > 0 {
+            println!(
+                "\u{001b}[36m[OUT]\u{001b}[0m {}",
+                String::from_utf8_lossy(&quartz_output.stdout)
+            );
+        }
+
         if !quartz_output.status.success() {
             println!(
-                "Quartz exit code: {}",
+                "\u{001b}[31m[ERR]\u{001b}[0m Quartz exit code: {}\n{}",
                 quartz_output.status.code().unwrap_or(0),
+                String::from_utf8_lossy(&quartz_output.stderr),
             );
-            panic!("{}", String::from_utf8_lossy(&quartz_output.stderr));
+            panic!();
         }
 
         let yosys_commands = format!("read_verilog -sv \"{sv_file}\"; read_verilog -DSIM {yosys_input_files}; synth -top Top -flatten -noalumacc -nordff -run begin:fine; hierarchy -check; check; write_json \"{json_file}\"");
-        let yosys_output = Command::new(&yosys_path)
-            .arg("-p")
-            .arg(yosys_commands)
-            .output()
-            .unwrap();
 
-        println!("{}", String::from_utf8_lossy(&yosys_output.stdout));
+        let mut yosys_cmd = Command::new(&yosys_path);
+        yosys_cmd.arg("-p").arg(yosys_commands);
+
+        println!("\u{001b}[36m[RUN]\u{001b}[0m {yosys_cmd:?}");
+        let yosys_output = yosys_cmd.output().unwrap();
+
+        if yosys_output.stdout.len() > 0 {
+            println!(
+                "\u{001b}[36m[OUT]\u{001b}[0m {}",
+                String::from_utf8_lossy(&yosys_output.stdout)
+            );
+        }
+
         if !yosys_output.status.success() {
             println!(
-                "Yosys exit code: {}",
+                "\u{001b}[31m[ERR]\u{001b}[0m Yosys exit code: {}\n{}",
                 yosys_output.status.code().unwrap_or(0),
+                String::from_utf8_lossy(&yosys_output.stderr),
             );
-            panic!("{}", String::from_utf8_lossy(&yosys_output.stderr));
+            panic!();
         }
     }
 }

@@ -38,10 +38,11 @@ const INF = 0x7F800000;
 mod Fpu (
     in sig lhs: bits<32>,
     in sig rhs: bits<32>,
-    out reg result: bits<32>,
 
     in sig op: FpuOp,
     in sig start: bool,
+
+    out reg result: bits<32>,
     out sig ready: bool,
 
     in sig enable: bool,
